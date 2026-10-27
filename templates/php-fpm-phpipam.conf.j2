@@ -1,0 +1,41 @@
+; {{ ansible_managed }}
+; Dedicated PHP-FPM pool for phpIPAM.
+[phpipam]
+user = {{ phpipam_user }}
+group = {{ phpipam_group }}
+listen = {{ phpipam_fpm_socket }}
+listen.acl_users = apache
+listen.mode = 0660
+
+pm = {{ phpipam_fpm_pm }}
+pm.max_children = {{ phpipam_fpm_max_children }}
+{% if phpipam_fpm_pm == 'dynamic' %}
+pm.start_servers = {{ phpipam_fpm_start_servers }}
+pm.min_spare_servers = {{ phpipam_fpm_min_spare_servers }}
+pm.max_spare_servers = {{ phpipam_fpm_max_spare_servers }}
+{% elif phpipam_fpm_pm == 'ondemand' %}
+pm.process_idle_timeout = 30s
+{% endif %}
+pm.max_requests = {{ phpipam_fpm_max_requests }}
+request_terminate_timeout = {{ phpipam_fpm_request_terminate_timeout }}
+request_slowlog_timeout = {{ phpipam_fpm_slowlog_timeout }}
+slowlog = /var/log/php-fpm/phpipam-slow.log
+security.limit_extensions = .php
+
+php_admin_value[error_log] = /var/log/php-fpm/phpipam-error.log
+php_admin_flag[log_errors] = on
+php_admin_flag[display_errors] = off
+php_admin_value[date.timezone] = {{ phpipam_php_timezone }}
+php_admin_value[memory_limit] = {{ phpipam_php_memory_limit }}
+php_admin_value[max_execution_time] = {{ phpipam_php_max_execution_time }}
+php_admin_value[max_input_vars] = {{ phpipam_php_max_input_vars }}
+php_admin_value[upload_max_filesize] = {{ phpipam_php_upload_max_filesize }}
+php_admin_value[post_max_size] = {{ phpipam_php_post_max_size }}
+php_admin_flag[session.cookie_httponly] = on
+php_admin_flag[session.cookie_secure] = on
+php_admin_flag[session.use_strict_mode] = on
+php_value[session.save_handler] = files
+php_value[session.save_path] = /var/lib/php/session
+{% for key, value in phpipam_php_settings_extra.items() %}
+php_admin_value[{{ key }}] = {{ value }}
+{% endfor %}

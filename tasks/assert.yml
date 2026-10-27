@@ -1,0 +1,87 @@
+---
+- name: Check the platform
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == 'RedHat'
+      - ansible_facts['distribution_major_version'] | int in [8, 9, 10]
+    fail_msg: This role supports RHEL 8, 9 and 10 and their rebuilds.
+    quiet: true
+
+- name: Check required secrets
+  ansible.builtin.assert:
+    that:
+      - phpipam_db_password | length >= 15
+      - phpipam_admin_password | length >= 8
+    fail_msg: >-
+      Set phpipam_db_password (15+ characters with upper and lower case, a digit
+      and a special character, as the MariaDB role's password policy requires) and
+      phpipam_admin_password (8+ characters).
+    quiet: true
+
+- name: Check database settings
+  ansible.builtin.assert:
+    that:
+      - not (phpipam_manage_mariadb | bool) or __phpipam_db_local | bool
+      - not (phpipam_kea_hosts_db_enabled | bool) or __phpipam_db_local | bool
+      - phpipam_db_name is match('^[A-Za-z0-9_]+$')
+      - phpipam_kea_hosts_db_name is match('^[A-Za-z0-9_]+$')
+      - phpipam_db_tmptable_engine in ['MEMORY', 'InnoDB']
+    fail_msg: >-
+      phpipam_manage_mariadb and phpipam_kea_hosts_db_enabled need phpipam_db_host
+      "localhost" (the database on this host). For a remote database, create the
+      database and user with the MariaDB role on the database server.
+    quiet: true
+
+- name: Check TLS settings
+  ansible.builtin.assert:
+    that:
+      - phpipam_tls_source in ['selfsigned', 'provided', 'apache']
+      - >-
+        phpipam_tls_source != 'provided' or
+        ((phpipam_tls_cert | length > 0 or phpipam_tls_cert_src | length > 0) and
+         (phpipam_tls_key | length > 0 or phpipam_tls_key_src | length > 0))
+    fail_msg: >-
+      phpipam_tls_source must be selfsigned, provided or apache. "provided" needs
+      phpipam_tls_cert/phpipam_tls_key (PEM content) or phpipam_tls_cert_src/phpipam_tls_key_src.
+    quiet: true
+
+- name: Check the base path
+  ansible.builtin.assert:
+    that: phpipam_base_path is match('^/([A-Za-z0-9._-]+/)*$')
+    fail_msg: phpipam_base_path must start and end with "/", e.g. "/" or "/ipam/".
+    quiet: true
+
+- name: Check settings column names
+  ansible.builtin.assert:
+    that: phpipam_settings.keys() | reject('match', '^[A-Za-z0-9_]+$') | list | length == 0
+    fail_msg: phpipam_settings keys must be column names of the phpIPAM settings table.
+    quiet: true
+
+- name: Check API applications
+  ansible.builtin.assert:
+    that:
+      - item.app_id is match('^[A-Za-z0-9_-]{3,32}$')
+      - item.security | default('ssl_token') in ['ssl_code', 'ssl_token', 'crypt', 'none']
+      - item.permissions | default(1) | int in [0, 1, 2, 3]
+      - item.security | default('ssl_token') not in ['ssl_code', 'crypt'] or (item.app_code | default('') | length) in range(16, 33)
+    fail_msg: >-
+      API app {{ item.app_id | default('?') }}: app_id is 3-32 characters of letters, digits, _ or -;
+      ssl_code and crypt apps need an app_code of 16-32 characters.
+    quiet: true
+  loop: "{{ __phpipam_api_apps }}"
+  loop_control:
+    label: "{{ item.app_id | default('?') }}"
+  no_log: true
+
+- name: Check Kea integration settings
+  ansible.builtin.assert:
+    that:
+      - not (phpipam_kea_hosts_db_enabled | bool) or phpipam_kea_hosts_db_password | length >= 15
+      - phpipam_kea_config_source in ['api', 'static']
+      - >-
+        not (phpipam_kea_dhcp_module_enabled | bool) or phpipam_kea_config_source != 'static'
+        or 'Dhcp4' in phpipam_kea_config or 'Dhcp6' in phpipam_kea_config
+    fail_msg: >-
+      phpipam_kea_hosts_db_password needs 15+ characters; phpipam_kea_config_source is api or
+      static, and static needs phpipam_kea_config with a Dhcp4 or Dhcp6 key.
+    quiet: true

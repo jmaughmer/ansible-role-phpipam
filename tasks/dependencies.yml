@@ -1,0 +1,56 @@
+---
+# The sibling roles get their lists merged with whatever the inventory already
+# sets, so a host can carry other databases, users or PHP packages as well.
+# set_fact pins the merged values before the include overrides the names.
+- name: Merge the database and user lists for the MariaDB role
+  ansible.builtin.set_fact:
+    __phpipam_mariadb_databases: >-
+      {{ (mariadb_databases | default([]) | rejectattr('name', 'in', __phpipam_mariadb_databases_own | map(attribute='name') | list) | list)
+         + __phpipam_mariadb_databases_own }}
+    __phpipam_mariadb_users: >-
+      {{ (mariadb_users | default([]) | rejectattr('name', 'in', __phpipam_mariadb_users_own | map(attribute='name') | list) | list)
+         + __phpipam_mariadb_users_own }}
+  when: phpipam_manage_mariadb | bool
+  no_log: true
+
+- name: Merge the MariaDB tuning for phpIPAM
+  ansible.builtin.set_fact:
+    __phpipam_mariadb_mysqld_options: >-
+      {{ mariadb_mysqld_options | default({})
+         | combine(__phpipam_mariadb_tuning | dict2items
+                   | rejectattr('key', 'in', ['innodb_buffer_pool_size', 'max_connections']) | items2dict) }}
+  when: phpipam_manage_mariadb | bool and phpipam_mariadb_tuning_enabled | bool
+
+- name: Run the MariaDB role with phpIPAM tuning
+  ansible.builtin.include_role:
+    name: "{{ phpipam_mariadb_role }}"
+  vars:
+    mariadb_databases: "{{ __phpipam_mariadb_databases }}"
+    mariadb_users: "{{ __phpipam_mariadb_users }}"
+    mariadb_innodb_buffer_pool_size: "{{ __phpipam_mariadb_tuning.innodb_buffer_pool_size }}"
+    mariadb_max_connections: "{{ __phpipam_mariadb_tuning.max_connections }}"
+    mariadb_mysqld_options: "{{ __phpipam_mariadb_mysqld_options }}"
+  when: phpipam_manage_mariadb | bool and phpipam_mariadb_tuning_enabled | bool
+
+- name: Run the MariaDB role
+  ansible.builtin.include_role:
+    name: "{{ phpipam_mariadb_role }}"
+  vars:
+    mariadb_databases: "{{ __phpipam_mariadb_databases }}"
+    mariadb_users: "{{ __phpipam_mariadb_users }}"
+  when: phpipam_manage_mariadb | bool and not (phpipam_mariadb_tuning_enabled | bool)
+
+- name: Merge the PHP and SELinux settings for the Apache role
+  ansible.builtin.set_fact:
+    __phpipam_apache_php_packages: "{{ (apache_php_packages | default([]) + phpipam_php_packages) | unique }}"
+    __phpipam_apache_selinux_booleans: "{{ apache_selinux_booleans | default({}) | combine(__phpipam_selinux_booleans) }}"
+  when: phpipam_manage_apache | bool
+
+- name: Run the Apache role
+  ansible.builtin.include_role:
+    name: "{{ phpipam_apache_role }}"
+  vars:
+    apache_php_enabled: true
+    apache_php_packages: "{{ __phpipam_apache_php_packages }}"
+    apache_selinux_booleans: "{{ __phpipam_apache_selinux_booleans }}"
+  when: phpipam_manage_apache | bool

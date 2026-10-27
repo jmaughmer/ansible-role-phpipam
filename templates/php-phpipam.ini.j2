@@ -1,0 +1,13 @@
+; {{ ansible_managed }}
+; System-level PHP settings for phpIPAM (these cannot be set per FPM pool).
+expose_php = Off
+realpath_cache_size = {{ phpipam_php_realpath_cache_size }}
+realpath_cache_ttl = 600
+
+opcache.enable = 1
+opcache.enable_cli = 0
+opcache.memory_consumption = {{ phpipam_php_opcache_memory }}
+opcache.interned_strings_buffer = 16
+opcache.max_accelerated_files = {{ phpipam_php_opcache_max_files }}
+opcache.validate_timestamps = 1
+opcache.revalidate_freq = {{ phpipam_php_opcache_revalidate_freq }}

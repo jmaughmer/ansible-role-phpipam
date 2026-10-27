@@ -1,0 +1,27 @@
+---
+- name: Enable and start PHP-FPM and Apache
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop: [php-fpm, httpd]
+
+- name: Apply pending service changes
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable job timers
+  ansible.builtin.systemd_service:
+    name: "phpipam-{{ item.name }}.timer"
+    state: started
+    enabled: true
+  loop: "{{ __phpipam_jobs_enabled }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Enable the backup timer
+  ansible.builtin.systemd_service:
+    name: phpipam-backup.timer
+    state: started
+    enabled: true
+  when: phpipam_backup_enabled | bool and __phpipam_db_local | bool

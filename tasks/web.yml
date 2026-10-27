@@ -1,0 +1,44 @@
+---
+- name: Write the phpIPAM PHP-FPM pool
+  ansible.builtin.template:
+    src: php-fpm-phpipam.conf.j2
+    dest: /etc/php-fpm.d/phpipam.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart phpIPAM php-fpm
+
+- name: Write system PHP settings (opcache, realpath cache)
+  ansible.builtin.template:
+    src: php-phpipam.ini.j2
+    dest: /etc/php.d/90-phpipam.ini
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart phpIPAM php-fpm
+
+# Named to load after the Apache role's ssl.conf, whose *:443 vhost stays the
+# default for names that match nothing.
+- name: Write the Apache configuration
+  ansible.builtin.template:
+    src: httpd-phpipam.conf.j2
+    dest: /etc/httpd/conf.d/zz-phpipam.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: /usr/sbin/httpd -t -c "Include %s"
+  notify: Reload phpIPAM httpd
+
+- name: Write MariaDB tuning for phpIPAM
+  ansible.builtin.template:
+    src: mariadb-phpipam.cnf.j2
+    dest: /etc/my.cnf.d/zz-phpipam.cnf
+    owner: root
+    group: root
+    mode: "0644"
+  # With phpipam_manage_mariadb the settings go through the MariaDB role.
+  when:
+    - phpipam_mariadb_tuning_enabled | bool
+    - __phpipam_db_local | bool
+    - not (phpipam_manage_mariadb | bool)
+  notify: Restart phpIPAM mariadb

@@ -1,0 +1,29 @@
+---
+# Names are prefixed so they do not collide with the MariaDB and Apache role
+# handlers in the same play.
+- name: Reload systemd for phpIPAM
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: Restart phpIPAM php-fpm
+  ansible.builtin.systemd_service:
+    name: php-fpm
+    state: restarted
+
+- name: Reload phpIPAM httpd
+  ansible.builtin.systemd_service:
+    name: httpd
+    state: reloaded
+
+- name: Restart phpIPAM mariadb
+  ansible.builtin.systemd_service:
+    name: mariadb
+    state: restarted
+
+- name: Restart phpIPAM timers
+  ansible.builtin.systemd_service:
+    name: "phpipam-{{ item.name }}.timer"
+    state: restarted
+  loop: "{{ __phpipam_jobs_enabled }}"
+  loop_control:
+    label: "{{ item.name }}"

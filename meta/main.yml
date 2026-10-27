@@ -1,0 +1,15 @@
+---
+galaxy_info:
+  role_name: phpipam
+  namespace: jmaughmer
+  author: Justin Maughmer
+  description: Install and configure phpIPAM on RHEL 8, 9 and 10 with MariaDB, Apache/PHP-FPM, TLS and Kea DHCP integration
+  license: MIT
+  min_ansible_version: "2.16"
+  platforms:
+    - name: EL
+      versions: ["8", "9", "10"]
+  galaxy_tags: [phpipam, ipam, kea, dhcp, networking, mariadb, apache]
+# jmaughmer.mariadb and jmaughmer.apache are run with include_role (see
+# phpipam_manage_mariadb / phpipam_manage_apache) so they can be turned off.
+dependencies: []

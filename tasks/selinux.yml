@@ -1,0 +1,37 @@
+---
+- name: Install SELinux management tools
+  ansible.builtin.dnf:
+    name:
+      - policycoreutils-python-utils
+      - python3-libselinux
+      - python3-policycoreutils
+    state: present
+
+# /var/www is httpd_sys_content_t already; this covers other locations.
+- name: Label the phpIPAM releases as web content
+  community.general.sefcontext:
+    target: "{{ phpipam_releases_dir }}(/.*)?"
+    setype: httpd_sys_content_t
+    state: present
+  when: not phpipam_releases_dir.startswith('/var/www/')
+  register: __phpipam_fcontext_content
+
+- name: Label the upload directories writable for PHP
+  community.general.sefcontext:
+    target: "{{ phpipam_releases_dir }}/[^/]+/{{ item }}(/.*)?"
+    setype: httpd_sys_rw_content_t
+    state: present
+  loop: "{{ __phpipam_writable_dirs }}"
+  register: __phpipam_fcontext_rw
+
+- name: Restore file contexts on the phpIPAM files
+  ansible.builtin.command: "restorecon -R -v {{ phpipam_releases_dir }} {{ phpipam_config_dir }} {{ phpipam_state_dir }}"
+  register: __phpipam_restorecon
+  changed_when: __phpipam_restorecon.stdout | length > 0
+
+- name: Set SELinux booleans
+  ansible.posix.seboolean:
+    name: "{{ item.key }}"
+    state: "{{ item.value | bool }}"
+    persistent: true
+  loop: "{{ __phpipam_selinux_booleans | dict2items }}"

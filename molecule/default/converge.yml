@@ -1,0 +1,41 @@
+---
+- name: Converge
+  hosts: all
+  vars:
+    # Passwords follow the MariaDB role's simple_password_check policy.
+    phpipam_db_password: "Molecule-DB-pass-2026!"
+    phpipam_admin_password: "Molecule-Admin-2026!"
+    phpipam_server_name: phpipam.example.test
+    phpipam_server_aliases: [ipam.example.test]
+    phpipam_tls_source: selfsigned
+    phpipam_settings:
+      enableVRF: 1
+      inactivityTimeout: 1800
+    phpipam_api_apps:
+      - { app_id: molecule, permissions: 2, security: ssl_token, comment: Molecule tests }
+    # Kea integration: API app for kea-phpipam-sync, a local reservation
+    # database and the DHCP module fed from a static configuration.
+    phpipam_kea_api_app_enabled: true
+    phpipam_kea_api_app_token: "MoleculeKeaToken0123456789abcdef"
+    phpipam_kea_hosts_db_enabled: true
+    phpipam_kea_hosts_db_password: "Molecule-Kea-pass-2026!"
+    phpipam_kea_hosts_db_client_hosts: ["10.%"]
+    phpipam_kea_dhcp_module_enabled: true
+    phpipam_kea_config_source: static
+    phpipam_kea_config:
+      Dhcp4:
+        subnet4:
+          - id: 1
+            subnet: 192.0.2.0/24
+            pools: [{ pool: 192.0.2.100 - 192.0.2.200 }]
+            user-context: { note: "lab #1" }
+        shared-networks:
+          - name: lab
+            subnet4:
+              - { id: 2, subnet: 198.51.100.0/24 }
+        lease-database: { type: memfile, name: /var/lib/kea/kea-leases4.csv }
+    # fapolicyd is installed (not started) by prepare.yml to test the trust file.
+  tasks:
+    - name: Include the role
+      ansible.builtin.include_role:
+        name: ansible-role-phpipam

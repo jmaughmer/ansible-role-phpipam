@@ -1,0 +1,109 @@
+---
+- name: Install PHP and helper packages
+  ansible.builtin.dnf:
+    name: "{{ phpipam_php_packages + __phpipam_tool_packages + phpipam_extra_packages }}"
+    state: present
+  vars:
+    # mariadb is the client, used for the schema import and backups.
+    __phpipam_tool_packages: >-
+      {{ ['tar', 'gzip', 'iputils', 'mariadb', 'python3-PyMySQL']
+         + (['python3-cryptography'] if phpipam_tls_source == 'selfsigned' else []) }}
+  notify: Restart phpIPAM php-fpm
+
+- name: Create phpIPAM directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: "{{ item.group | default('root') }}"
+    mode: "{{ item.mode | default('0755') }}"
+  loop:
+    - { path: "{{ phpipam_releases_dir }}" }
+    - { path: "{{ phpipam_config_dir }}", group: "{{ phpipam_group }}", mode: "0750" }
+    - { path: "{{ phpipam_state_dir }}", mode: "0750" }
+    - { path: "{{ phpipam_backup_dir }}", mode: "0700" }
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Check for the release directory
+  ansible.builtin.stat:
+    path: "{{ __phpipam_release_dir }}/index.php"
+  register: __phpipam_release_stat
+
+- name: Fetch and unpack the release
+  when: not __phpipam_release_stat.stat.exists
+  block:
+    - name: Create the release directory
+      ansible.builtin.file:
+        path: "{{ __phpipam_release_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Download the release
+      ansible.builtin.get_url:
+        url: "{{ phpipam_archive_url }}"
+        dest: "{{ phpipam_state_dir }}/phpipam-{{ phpipam_version }}.tgz"
+        checksum: "{{ phpipam_archive_checksum | default(omit, true) }}"
+        owner: root
+        group: root
+        mode: "0640"
+      when: phpipam_archive_src | length == 0
+
+    - name: Copy the release from the controller
+      ansible.builtin.copy:
+        src: "{{ phpipam_archive_src }}"
+        dest: "{{ phpipam_state_dir }}/phpipam-{{ phpipam_version }}.tgz"
+        owner: root
+        group: root
+        mode: "0640"
+      when: phpipam_archive_src | length > 0
+
+    - name: Unpack the release
+      ansible.builtin.unarchive:
+        src: "{{ phpipam_state_dir }}/phpipam-{{ phpipam_version }}.tgz"
+        dest: "{{ __phpipam_release_dir }}"
+        remote_src: true
+        extra_opts: [--strip-components=1, --no-same-owner]
+        owner: root
+        group: root
+
+    - name: Check the release unpacked
+      ansible.builtin.stat:
+        path: "{{ __phpipam_release_dir }}/functions/version.php"
+      register: __phpipam_version_file
+      failed_when: not __phpipam_version_file.stat.exists
+
+    - name: Remove the downloaded tarball
+      ansible.builtin.file:
+        path: "{{ phpipam_state_dir }}/phpipam-{{ phpipam_version }}.tgz"
+        state: absent
+
+  rescue:
+    - name: Remove the incomplete release
+      ansible.builtin.file:
+        path: "{{ __phpipam_release_dir }}"
+        state: absent
+
+    - name: Stop after the failed install
+      ansible.builtin.fail:
+        msg: "Could not install phpIPAM {{ phpipam_version }} from {{ phpipam_archive_src or phpipam_archive_url }}."
+
+# The tree stays root-owned and read-only for PHP, except the upload folders.
+- name: Make the upload directories writable by PHP
+  ansible.builtin.file:
+    path: "{{ __phpipam_release_dir }}/{{ item }}"
+    state: directory
+    owner: "{{ phpipam_user }}"
+    group: "{{ phpipam_group }}"
+    mode: "0750"
+  loop: "{{ __phpipam_writable_dirs }}"
+
+- name: Install the phpIPAM helper for Ansible
+  ansible.builtin.copy:
+    src: phpipam-ansible.php
+    dest: "{{ __phpipam_helper }}"
+    owner: root
+    group: root
+    mode: "0700"

@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Run phpIPAM {{ __phpipam_job.name }} on a schedule
+
+[Timer]
+OnCalendar={{ __phpipam_job.on_calendar }}
+RandomizedDelaySec={{ __phpipam_job.randomized_delay | default('60') }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target

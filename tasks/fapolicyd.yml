@@ -1,0 +1,55 @@
+---
+# fapolicyd's default rules only let interpreters read scripts it trusts, and
+# PHP files count (text/x-php). The phpIPAM tarball is not an RPM, so its files
+# go into a trust.d file with path, size and SHA-256. The list is rebuilt on
+# every run, so upgrades and config changes stay trusted.
+- name: Check for fapolicyd
+  ansible.builtin.stat:
+    path: /usr/sbin/fapolicyd
+  register: __phpipam_fapolicyd_bin
+
+- name: Trust phpIPAM files in fapolicyd
+  when: __phpipam_fapolicyd_bin.stat.exists
+  block:
+    - name: Hash the files to trust
+      ansible.builtin.command:
+        argv: "{{ [ansible_facts['python']['executable'], '-c', __phpipam_hash_script] + __phpipam_fapolicyd_paths }}"
+      vars:
+        __phpipam_hash_script: |
+          import hashlib, os, sys
+          files = []
+          for top in sys.argv[1:]:
+              if os.path.isfile(top):
+                  files.append(top)
+              for d, _, names in os.walk(top):
+                  files.extend(os.path.join(d, n) for n in names)
+          for p in sorted(set(files)):
+              if os.path.islink(p) or not os.path.isfile(p) or any(c.isspace() for c in p):
+                  continue
+              h = hashlib.sha256()
+              with open(p, "rb") as f:
+                  for chunk in iter(lambda: f.read(1 << 20), b""):
+                      h.update(chunk)
+              print(p, os.path.getsize(p), h.hexdigest())
+      register: __phpipam_fapolicyd_hashes
+      changed_when: false
+      check_mode: false
+
+    - name: Write the fapolicyd trust file
+      ansible.builtin.copy:
+        dest: "/etc/fapolicyd/trust.d/{{ phpipam_fapolicyd_trust_file }}"
+        content: |
+          # Managed by Ansible (ansible-role-phpipam)
+          {{ __phpipam_fapolicyd_hashes.stdout }}
+        owner: root
+        group: fapolicyd
+        mode: "0644"
+      register: __phpipam_fapolicyd_trust
+
+    # Not a handler: the trust must be live before the role runs PHP below.
+    - name: Load the new trust into fapolicyd  # noqa: no-handler
+      ansible.builtin.command: fapolicyd-cli --update
+      when: __phpipam_fapolicyd_trust is changed
+      changed_when: true
+      # fapolicyd reads trust.d on start, so there is nothing to do while stopped.
+      failed_when: false

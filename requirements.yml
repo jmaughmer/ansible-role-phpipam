@@ -1,0 +1,26 @@
+---
+# Install with:
+#   ansible-galaxy role install -r requirements.yml
+#   ansible-galaxy collection install -r requirements.yml
+roles:
+  # TODO: switch version to main once the role PRs are merged.
+  - name: jmaughmer.mariadb
+    src: https://github.com/jmaughmer/ansible-role-mariadb.git
+    scm: git
+    version: claude/project-thread-9kpleb
+  - name: jmaughmer.apache
+    src: https://github.com/jmaughmer/ansible-role-apache.git
+    scm: git
+    version: claude/project-thread-9kpleb
+collections:
+  - name: ansible.posix
+    version: ">=1.5.0"
+  - name: community.general
+    version: ">=8.0.0"
+  # community.mysql's modules moved to ansible.mysql.
+  - name: ansible.mysql
+    version: ">=4.2.1"
+  - name: community.crypto
+    version: ">=2.15.0"
+  - name: containers.podman
+    version: ">=1.10.0"

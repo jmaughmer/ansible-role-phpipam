@@ -1,0 +1,81 @@
+---
+__phpipam_release_dir: "{{ phpipam_releases_dir }}/phpipam-{{ phpipam_version }}"
+__phpipam_db_local: "{{ phpipam_db_host == 'localhost' }}"
+__phpipam_helper: /usr/local/libexec/phpipam-ansible.php
+__phpipam_selinux_enabled: "{{ ansible_facts['selinux']['status'] | default('disabled') == 'enabled' }}"
+
+# Directories inside a release that phpIPAM writes to (logo and CSV uploads).
+__phpipam_writable_dirs:
+  - css/images/logo
+  - app/admin/import-export/upload
+  - app/subnets/import-subnet/upload
+
+__phpipam_tls_files:
+  selfsigned:
+    cert: "{{ phpipam_tls_cert_path }}"
+    key: "{{ phpipam_tls_key_path }}"
+    chain: ""
+  provided:
+    cert: "{{ phpipam_tls_cert_path }}"
+    key: "{{ phpipam_tls_key_path }}"
+    chain: "{{ phpipam_tls_chain_path if (phpipam_tls_chain | length > 0 or phpipam_tls_chain_src | length > 0) else '' }}"
+  apache:
+    cert: "{{ apache_tls_cert_path | default('/etc/pki/httpd/server.crt') }}"
+    key: "{{ apache_tls_key_path | default('/etc/pki/httpd/server.key') }}"
+    chain: ""
+__phpipam_tls: "{{ __phpipam_tls_files[phpipam_tls_source] }}"
+
+__phpipam_kea_api_app:
+  app_id: "{{ phpipam_kea_api_app_id }}"
+  app_code: "{{ phpipam_kea_api_app_token }}"
+  permissions: "{{ phpipam_kea_api_app_permissions }}"
+  security: ssl_code
+  comment: Kea DHCP reservation sync (kea-phpipam-sync)
+__phpipam_api_apps: "{{ phpipam_api_apps + ([__phpipam_kea_api_app] if phpipam_kea_api_app_enabled | bool else []) }}"
+
+__phpipam_settings_base:
+  siteTitle: "{{ phpipam_site_title }}"
+  siteAdminName: "{{ phpipam_site_admin_name }}"
+  siteAdminMail: "{{ phpipam_site_admin_mail }}"
+  siteDomain: "{{ phpipam_site_domain }}"
+  siteURL: "{{ phpipam_site_url }}"
+  prettyLinks: "{{ 'Yes' if phpipam_pretty_links | bool else 'No' }}"
+__phpipam_settings_api: "{{ {'api': 1} if __phpipam_api_apps | length > 0 else {} }}"
+__phpipam_settings_dhcp: >-
+  {{ {'enableDHCP': 1, 'DHCP': {'type': 'kea', 'settings': {'file': phpipam_kea_config_file}} | to_json}
+     if phpipam_kea_dhcp_module_enabled | bool else {} }}
+__phpipam_settings: "{{ __phpipam_settings_base | combine(__phpipam_settings_api, __phpipam_settings_dhcp, phpipam_settings) }}"
+
+# Databases and users handed to the MariaDB role.
+__phpipam_db_privs: >-
+  {{ {phpipam_db_name ~ '.*': 'ALL'}
+     | combine({phpipam_kea_hosts_db_name ~ '.*': 'SELECT'} if phpipam_kea_hosts_db_enabled | bool else {}) }}
+__phpipam_mariadb_databases_own: >-
+  {{ [{'name': phpipam_db_name, 'encoding': 'utf8mb4', 'collation': 'utf8mb4_unicode_ci'}]
+     + ([{'name': phpipam_kea_hosts_db_name, 'encoding': 'utf8mb4', 'collation': 'utf8mb4_unicode_ci'}]
+        if phpipam_kea_hosts_db_enabled | bool else []) }}
+__phpipam_mariadb_users_own: >-
+  {{ [{'name': phpipam_db_user, 'host': 'localhost', 'password': phpipam_db_password, 'priv': __phpipam_db_privs}]
+     + (phpipam_kea_hosts_db_client_hosts | map('community.general.dict_kv', 'host')
+        | map('combine', {'name': phpipam_kea_hosts_db_user, 'password': phpipam_kea_hosts_db_password,
+                          'priv': {phpipam_kea_hosts_db_name ~ '.*': 'ALL'}}) | list
+        if phpipam_kea_hosts_db_enabled | bool else []) }}
+
+# Only booleans phpIPAM needs are switched on; nothing is switched off.
+__phpipam_selinux_booleans: >-
+  {{ {}
+     | combine({'httpd_can_network_connect_db': true} if not (__phpipam_db_local | bool) else {})
+     | combine({'httpd_can_sendmail': true}
+               if (phpipam_ping_check_send_mail | bool or phpipam_discovery_check_send_mail | bool) else {})
+     | combine(phpipam_selinux_booleans) }}
+
+# Scheduled jobs with "enabled" defaulting to true.
+__phpipam_jobs: "{{ [{'enabled': true}] | product(phpipam_jobs + phpipam_jobs_extra) | map('combine') | list }}"
+__phpipam_jobs_enabled: "{{ __phpipam_jobs | selectattr('enabled') | list }}"
+
+__phpipam_mariadb_tuning: "{{ phpipam_mariadb_tuning_defaults | combine(phpipam_mariadb_tuning) }}"
+
+__phpipam_fapolicyd_paths:
+  - "{{ phpipam_releases_dir }}"
+  - "{{ phpipam_config_dir }}/config.php"
+  - "{{ __phpipam_helper }}"

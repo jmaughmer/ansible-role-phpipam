@@ -1,0 +1,17 @@
+# {{ ansible_managed }}
+[Unit]
+Description=phpIPAM {{ __phpipam_job.name }} ({{ __phpipam_job.script }})
+After=network-online.target{{ ' mariadb.service' if __phpipam_db_local | bool else '' }}
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User={{ phpipam_user }}
+Group={{ phpipam_group }}
+ExecStart=/usr/bin/php {{ phpipam_web_root }}/functions/scripts/{{ __phpipam_job.script }}{{ (' ' ~ __phpipam_job.args) if __phpipam_job.args is defined else '' }}
+Nice=10
+IOSchedulingClass=idle
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+TimeoutStartSec={{ __phpipam_job.timeout | default('1h') }}

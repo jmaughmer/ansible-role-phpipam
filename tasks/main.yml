@@ -1,0 +1,56 @@
+---
+- name: Validate role variables
+  ansible.builtin.import_tasks: assert.yml
+  tags: [phpipam, phpipam_assert]
+
+- name: Install MariaDB and Apache with their roles
+  ansible.builtin.import_tasks: dependencies.yml
+  tags: [phpipam, phpipam_dependencies]
+
+- name: Install phpIPAM
+  ansible.builtin.import_tasks: install.yml
+  tags: [phpipam, phpipam_install]
+
+- name: Configure phpIPAM
+  ansible.builtin.import_tasks: config.yml
+  tags: [phpipam, phpipam_config]
+
+- name: Write the Kea configuration for the DHCP module
+  ansible.builtin.include_tasks: kea.yml
+  when: phpipam_kea_dhcp_module_enabled | bool
+  tags: [phpipam, phpipam_config, phpipam_kea]
+
+- name: Configure SELinux
+  ansible.builtin.include_tasks: selinux.yml
+  when: phpipam_selinux_manage | bool and __phpipam_selinux_enabled | bool
+  tags: [phpipam, phpipam_security, phpipam_selinux]
+
+# Before any PHP runs: fapolicyd blocks PHP from reading untrusted scripts.
+- name: Configure fapolicyd trust
+  ansible.builtin.include_tasks: fapolicyd.yml
+  when: phpipam_fapolicyd_manage | bool
+  tags: [phpipam, phpipam_security, phpipam_fapolicyd]
+
+- name: Install or upgrade the database
+  ansible.builtin.import_tasks: database.yml
+  tags: [phpipam, phpipam_database]
+
+- name: Activate the release
+  ansible.builtin.import_tasks: activate.yml
+  tags: [phpipam, phpipam_install]
+
+- name: Install the TLS certificate
+  ansible.builtin.import_tasks: tls.yml
+  tags: [phpipam, phpipam_tls]
+
+- name: Configure PHP-FPM, Apache and MariaDB tuning
+  ansible.builtin.import_tasks: web.yml
+  tags: [phpipam, phpipam_web, phpipam_tuning]
+
+- name: Configure scheduled jobs and backups
+  ansible.builtin.import_tasks: jobs.yml
+  tags: [phpipam, phpipam_jobs]
+
+- name: Start services
+  ansible.builtin.import_tasks: services.yml
+  tags: [phpipam, phpipam_service]

@@ -1,0 +1,19 @@
+{#
+  Only what phpIPAM reads is kept: subnets (shared networks flattened) and the
+  lease and hosts databases. phpIPAM drops every line that contains "#", so
+  that character is written as a JSON escape.
+#}
+{% set ns = namespace(out={}) %}
+{% for family, key in [('Dhcp4', 'subnet4'), ('Dhcp6', 'subnet6')] if family in __phpipam_kea_source %}
+{%   set src = __phpipam_kea_source[family] %}
+{%   set subnets = src.get(key, []) + (src.get('shared-networks', []) | map(attribute=key, default=[]) | flatten(levels=1) | list) %}
+{%   set section = {key: subnets} %}
+{%   set hosts = phpipam_kea_hosts_database if phpipam_kea_hosts_database | length > 0
+                 else src.get('hosts-database', (src.get('hosts-databases', []) + [{}]) | first) %}
+{%   set leases = phpipam_kea_lease_database if phpipam_kea_lease_database | length > 0
+                  else src.get('lease-database', {}) %}
+{%   if hosts | length > 0 %}{% set section = section | combine({'hosts-database': hosts}) %}{% endif %}
+{%   if leases | length > 0 %}{% set section = section | combine({'lease-database': leases}) %}{% endif %}
+{%   set ns.out = ns.out | combine({family: section}) %}
+{% endfor %}
+{{ ns.out | to_nice_json(indent=2) | replace('#', '\\u0023') }}

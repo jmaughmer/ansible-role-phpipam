@@ -1,0 +1,99 @@
+# {{ ansible_managed }}
+# phpIPAM {{ phpipam_version }} on https://{{ phpipam_server_name }}{{ phpipam_base_path }}
+{% set base = phpipam_base_path %}
+{% set root = phpipam_web_root %}
+{% if phpipam_http_redirect | bool %}
+<VirtualHost *:{{ phpipam_http_port }}>
+    ServerName {{ phpipam_server_name }}
+{% for alias in phpipam_server_aliases %}
+    ServerAlias {{ alias }}
+{% endfor %}
+    RewriteEngine On
+    RewriteRule ^ https://%{SERVER_NAME}{{ '' if phpipam_https_port | int == 443 else ':' ~ phpipam_https_port }}%{REQUEST_URI} [R=301,L]
+</VirtualHost>
+
+{% endif %}
+<VirtualHost *:{{ phpipam_https_port }}>
+    ServerName {{ phpipam_server_name }}
+{% for alias in phpipam_server_aliases %}
+    ServerAlias {{ alias }}
+{% endfor %}
+{% if base == '/' %}
+    DocumentRoot {{ root }}
+{% else %}
+    Alias {{ base | regex_replace('/$', '') }} {{ root }}
+{% endif %}
+
+    SSLEngine on
+    SSLCertificateFile {{ __phpipam_tls.cert }}
+    SSLCertificateKeyFile {{ __phpipam_tls.key }}
+{% if __phpipam_tls.chain | length > 0 %}
+    SSLCertificateChainFile {{ __phpipam_tls.chain }}
+{% endif %}
+
+    # Other security headers come from the Apache role's global hardening.
+    Header always set Strict-Transport-Security "max-age={{ phpipam_hsts_max_age }}"
+
+    # Long scans, imports and API calls.
+    ProxyTimeout {{ phpipam_fpm_request_terminate_timeout }}
+    LimitRequestBody {{ phpipam_php_post_max_size | human_to_bytes }}
+
+    ErrorLog logs/phpipam_error_log
+    CustomLog logs/phpipam_access_log combined
+
+    <Directory "{{ root }}">
+        Options FollowSymLinks
+        # The .htaccess rules shipped with phpIPAM are repeated here, so
+        # Apache never has to look for .htaccess files.
+        AllowOverride None
+        Require all granted
+        DirectoryIndex index.php
+        CGIPassAuth On
+
+        <FilesMatch "\.php$">
+            SetHandler "proxy:unix:{{ phpipam_fpm_socket }}|fcgi://phpipam"
+        </FilesMatch>
+
+        RewriteEngine On
+        RewriteBase {{ base }}
+        RewriteRule ^(css|js|app|test)/.*$ - [L,QSA]
+        RewriteRule ^index\.php$ - [L]
+        RewriteCond %{REQUEST_FILENAME} !-d
+        RewriteCond %{REQUEST_FILENAME} !-f
+        RewriteRule ^ index.php [L]
+    </Directory>
+
+    # Never served: schema and backups, CLI scripts, docs, and the web
+    # installer and upgrader (the role does both from the command line).
+    <DirectoryMatch "^{{ root | regex_escape }}/(db|misc|doc|functions/scripts|upgrade{{ '|install' if phpipam_disable_installer | bool else '' }})(/|$)">
+        Require all denied
+    </DirectoryMatch>
+
+    # Upload folders: no direct access, nothing executes.
+    <DirectoryMatch "^{{ root | regex_escape }}/app/(admin/import-export|subnets/import-subnet)/upload(/|$)">
+        Require all denied
+        SetHandler none
+    </DirectoryMatch>
+
+    # Uploaded logos: PNG only.
+    <Directory "{{ root }}/css/images/logo">
+        SetHandler none
+        <FilesMatch ".">
+            Require all denied
+        </FilesMatch>
+        <FilesMatch "\.png$">
+            Require all granted
+        </FilesMatch>
+    </Directory>
+
+    <Files "config.php">
+        Require all denied
+    </Files>
+    <FilesMatch "^\.">
+        Require all denied
+    </FilesMatch>
+{% if phpipam_vhost_extra | length > 0 %}
+
+{{ phpipam_vhost_extra | indent(4, true) }}
+{% endif %}
+</VirtualHost>

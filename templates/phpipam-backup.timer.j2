@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Back up the phpIPAM database daily
+
+[Timer]
+OnCalendar={{ phpipam_backup_on_calendar }}
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target
