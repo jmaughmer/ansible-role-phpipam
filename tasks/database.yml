@@ -1,0 +1,100 @@
+---
+# Everything here logs in as the phpIPAM user: over the socket for a local
+# database, or over TLS for a remote one.
+- name: Manage the phpIPAM database
+  module_defaults:
+    ansible.mysql.mysql_db: &phpipam_db_login
+      login_user: "{{ phpipam_db_user }}"
+      login_password: "{{ phpipam_db_password }}"
+      login_unix_socket: "{{ phpipam_db_socket if __phpipam_db_local | bool else omit }}"
+      login_host: "{{ omit if __phpipam_db_local | bool else phpipam_db_host }}"
+      login_port: "{{ omit if __phpipam_db_local | bool else phpipam_db_port }}"
+      ca_cert: "{{ phpipam_db_tls_ca if phpipam_db_tls | bool else omit }}"
+      client_cert: "{{ phpipam_db_tls_cert if phpipam_db_tls | bool and phpipam_db_tls_cert | length > 0 else omit }}"
+      client_key: "{{ phpipam_db_tls_key if phpipam_db_tls | bool and phpipam_db_tls_key | length > 0 else omit }}"
+      check_hostname: "{{ phpipam_db_tls_verify | bool if phpipam_db_tls | bool else omit }}"
+    ansible.mysql.mysql_query:
+      <<: *phpipam_db_login
+      login_db: "{{ phpipam_db_name }}"
+  block:
+    - name: Look for the phpIPAM schema
+      ansible.mysql.mysql_query:
+        query: SHOW TABLES LIKE 'settings'
+      register: __phpipam_schema
+      changed_when: false
+      check_mode: false
+
+    - name: Import the phpIPAM schema
+      ansible.mysql.mysql_db:
+        name: "{{ phpipam_db_name }}"
+        state: import
+        target: "{{ __phpipam_release_dir }}/db/SCHEMA.sql"
+      when: __phpipam_schema.query_result[0] | length == 0
+      register: __phpipam_schema_import
+
+    - name: Read the database version
+      ansible.builtin.command:
+        argv: [php, "{{ __phpipam_helper }}", "{{ __phpipam_release_dir }}", status]
+      register: __phpipam_db_status
+      changed_when: false
+      check_mode: false
+
+    - name: Back up the database before the upgrade
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail;
+          mysqldump --single-transaction --routines --triggers {{ phpipam_db_name | quote }}
+          | gzip > {{ (phpipam_backup_dir ~ '/pre-upgrade-' ~ (__phpipam_db_status.stdout | from_json).db ~ '.sql.gz') | quote }}
+        executable: /bin/bash
+      when:
+        - not (__phpipam_db_status.stdout | from_json).current
+        - phpipam_db_backup_before_upgrade | bool
+        - __phpipam_db_local | bool
+      changed_when: true
+
+    - name: Upgrade the database
+      ansible.builtin.command:
+        argv: [php, "{{ __phpipam_helper }}", "{{ __phpipam_release_dir }}", upgrade]
+      register: __phpipam_db_upgrade
+      when: not (__phpipam_db_status.stdout | from_json).current
+      changed_when: __phpipam_db_upgrade.stdout is search('^upgraded')
+
+    - name: Set the Admin password
+      ansible.builtin.command:
+        argv: [php, "{{ __phpipam_helper }}", "{{ __phpipam_release_dir }}", set-admin-password]
+        stdin: "{{ phpipam_admin_password }}"
+      register: __phpipam_admin_password
+      when: __phpipam_schema_import is changed or phpipam_admin_password_enforce | bool
+      changed_when: __phpipam_admin_password.stdout is search('changed')
+      no_log: true
+
+    - name: Apply phpIPAM settings
+      ansible.mysql.mysql_query:
+        query: "UPDATE `settings` SET `{{ item.key }}` = %s WHERE `id` = 1"
+        positional_args: ["{{ item.value }}"]
+      loop: "{{ __phpipam_settings | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      register: __phpipam_settings_result
+      changed_when: __phpipam_settings_result.rowcount | sum > 0
+
+    - name: Manage API applications
+      ansible.mysql.mysql_query:
+        query: >-
+          INSERT INTO `api` (`app_id`, `app_code`, `app_permissions`, `app_security`, `app_comment`, `app_lock_type`)
+          VALUES (%s, %s, %s, %s, %s, %s)
+          ON DUPLICATE KEY UPDATE `app_code` = VALUES(`app_code`), `app_permissions` = VALUES(`app_permissions`),
+          `app_security` = VALUES(`app_security`), `app_comment` = VALUES(`app_comment`), `app_lock_type` = VALUES(`app_lock_type`)
+        positional_args:
+          - "{{ item.app_id }}"
+          - "{{ item.app_code | default('') }}"
+          - "{{ item.permissions | default(1) | int }}"
+          - "{{ item.security | default('ssl_token') }}"
+          - "{{ item.comment | default('Managed by Ansible') }}"
+          - "{{ item.lock_type | default('Auto') }}"
+      loop: "{{ __phpipam_api_apps }}"
+      loop_control:
+        label: "{{ item.app_id }}"
+      register: __phpipam_api_result
+      changed_when: __phpipam_api_result.rowcount | sum > 0
+      no_log: true

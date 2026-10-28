@@ -1,0 +1,38 @@
+---
+# Collections and the dependent roles are installed by scripts/test.sh.
+dependency:
+  name: galaxy
+  enabled: false
+driver:
+  name: podman
+platforms:
+  - name: phpipam-el8
+    image: docker.io/almalinux/8-init
+    pre_build_image: true
+    command: /sbin/init
+    systemd: always
+    privileged: true
+    rootless: true
+# EL8 ships Python 3.6 with the dnf bindings, which ansible-core 2.17+ can no
+# longer drive; scripts/test.sh runs this scenario with ansible-core 2.16.
+provisioner:
+  name: ansible
+  playbooks:
+    prepare: ../default/prepare.yml
+    converge: ../default/converge.yml
+    verify: ../default/verify.yml
+  env:
+    # scripts/test.sh sets PHPIPAM_TEST_ROLES to where it installed the dependent roles.
+    ANSIBLE_ROLES_PATH: "${MOLECULE_PROJECT_DIRECTORY}/..:${PHPIPAM_TEST_ROLES}"
+verifier:
+  name: ansible
+scenario:
+  test_sequence:
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - verify
+    - destroy

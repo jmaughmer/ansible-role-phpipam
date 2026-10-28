@@ -1,0 +1,19 @@
+---
+# config.php lives outside the web root, readable by PHP only, and is linked
+# into each release.
+- name: Write config.php
+  ansible.builtin.template:
+    src: config.php.j2
+    dest: "{{ phpipam_config_dir }}/config.php"
+    owner: root
+    group: "{{ phpipam_group }}"
+    mode: "0640"
+  no_log: true
+  notify: Restart phpIPAM php-fpm
+
+- name: Link config.php into the release
+  ansible.builtin.file:
+    src: "{{ phpipam_config_dir }}/config.php"
+    dest: "{{ __phpipam_release_dir }}/config.php"
+    state: link
+    force: true

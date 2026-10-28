@@ -1,0 +1,46 @@
+---
+- name: Install job units
+  ansible.builtin.template:
+    src: "phpipam-job.{{ item.1 }}.j2"
+    dest: "/etc/systemd/system/phpipam-{{ item.0.name }}.{{ item.1 }}"
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    __phpipam_job: "{{ item.0 }}"
+  loop: "{{ __phpipam_jobs_enabled | product(['service', 'timer']) | list }}"
+  loop_control:
+    label: "phpipam-{{ item.0.name }}.{{ item.1 }}"
+  notify:
+    - Reload systemd for phpIPAM
+    - Restart phpIPAM timers
+
+- name: Stop disabled jobs
+  ansible.builtin.systemd_service:
+    name: "phpipam-{{ item.name }}.timer"
+    state: stopped
+    enabled: false
+  loop: "{{ __phpipam_jobs | rejectattr('enabled') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  failed_when: false
+
+- name: Remove disabled job units
+  ansible.builtin.file:
+    path: "/etc/systemd/system/phpipam-{{ item.0.name }}.{{ item.1 }}"
+    state: absent
+  loop: "{{ __phpipam_jobs | rejectattr('enabled') | product(['service', 'timer']) | list }}"
+  loop_control:
+    label: "phpipam-{{ item.0.name }}.{{ item.1 }}"
+  notify: Reload systemd for phpIPAM
+
+- name: Install the backup units
+  ansible.builtin.template:
+    src: "phpipam-backup.{{ item }}.j2"
+    dest: "/etc/systemd/system/phpipam-backup.{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [service, timer]
+  when: phpipam_backup_enabled | bool and __phpipam_db_local | bool
+  notify: Reload systemd for phpIPAM

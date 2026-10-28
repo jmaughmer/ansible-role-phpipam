@@ -1,0 +1,15 @@
+---
+- name: Prepare
+  hosts: all
+  tasks:
+    - name: Install fapolicyd (left stopped) so the role writes its trust file
+      ansible.builtin.dnf:
+        name: fapolicyd
+        state: present
+
+    # /etc/hosts is a bind mount in podman, so it cannot be replaced atomically.
+    - name: Resolve the test server name locally
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        line: 127.0.0.1 phpipam.example.test
+        unsafe_writes: true

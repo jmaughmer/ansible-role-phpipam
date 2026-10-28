@@ -1,0 +1,293 @@
+---
+# =============================================================================
+# Release
+# =============================================================================
+# phpIPAM is not packaged for RHEL, so the role installs the upstream release
+# tarball (which bundles its PHP libraries) into a versioned directory and
+# points phpipam_web_root at it. Upgrades unpack the new release, back up and
+# upgrade the database, then switch the symlink.
+phpipam_version: "1.8.3"
+phpipam_archive_url: "https://github.com/phpipam/phpipam/releases/download/v{{ phpipam_version }}/phpipam-v{{ phpipam_version }}.tgz"
+# Optional checksum for the download, e.g. "sha256:0123...".
+phpipam_archive_checksum: ""
+# For air-gapped hosts: a tarball on the controller, copied instead of downloaded.
+phpipam_archive_src: ""
+phpipam_releases_dir: /var/www/phpipam-releases
+phpipam_web_root: /var/www/phpipam
+phpipam_config_dir: /etc/phpipam
+phpipam_state_dir: /var/lib/phpipam
+# Releases kept in phpipam_releases_dir, including the current one.
+phpipam_keep_releases: 2
+# User and group PHP-FPM and the scheduled jobs run as.
+phpipam_user: apache
+phpipam_group: apache
+
+# =============================================================================
+# Dependencies (jmaughmer.mariadb and jmaughmer.apache)
+# =============================================================================
+# Run the MariaDB role on this host to install the server and create the
+# phpIPAM database and user. Turn off when the database lives elsewhere or is
+# managed separately. Any other mariadb_* variable you set in your inventory
+# reaches that role as usual.
+phpipam_manage_mariadb: true
+phpipam_mariadb_role: jmaughmer.mariadb
+# Run the Apache role to install httpd, mod_ssl and PHP-FPM.
+phpipam_manage_apache: true
+phpipam_apache_role: jmaughmer.apache
+
+# =============================================================================
+# Database
+# =============================================================================
+# "localhost" connects over the Unix socket. Any other value uses TCP, which
+# the MariaDB role only allows with TLS, so phpipam_db_tls defaults on for it.
+phpipam_db_host: localhost
+phpipam_db_port: 3306
+phpipam_db_socket: /var/lib/mysql/mysql.sock
+phpipam_db_name: phpipam
+phpipam_db_user: phpipam
+# Required. The MariaDB role enforces simple_password_check: 15+ characters
+# with upper case, lower case, a digit and a special character.
+phpipam_db_password: ""
+phpipam_db_tls: "{{ phpipam_db_host != 'localhost' }}"
+# CA that signed the database server certificate, on the phpIPAM host.
+phpipam_db_tls_ca: /etc/pki/mariadb/ca.crt
+phpipam_db_tls_verify: true
+# Optional client certificate (for users created with REQUIRE X509).
+phpipam_db_tls_cert: ""
+phpipam_db_tls_key: ""
+# Engine for phpIPAM's temporary tables. MEMORY is fastest; it is capped by
+# tmp_table_size / max_heap_table_size (see phpipam_mariadb_tuning).
+phpipam_db_tmptable_engine: MEMORY
+# Back up the database before every upgrade (local database only).
+phpipam_db_backup_before_upgrade: true
+
+# =============================================================================
+# Web server and virtual host
+# =============================================================================
+phpipam_server_name: "{{ ansible_facts['fqdn'] }}"
+phpipam_server_aliases: []
+# URL path phpIPAM is served under, with a trailing slash ("/" or "/ipam/").
+phpipam_base_path: /
+phpipam_https_port: 443
+phpipam_http_port: 80
+# Redirect plain HTTP to HTTPS for phpipam_server_name.
+phpipam_http_redirect: true
+phpipam_hsts_max_age: 31536000
+# Set when phpIPAM sits behind a reverse proxy that sets X-Forwarded-* headers.
+phpipam_trust_proxy_headers: false
+# Extra Apache directives for the TLS virtual host.
+phpipam_vhost_extra: ""
+
+# =============================================================================
+# TLS certificate
+# =============================================================================
+# selfsigned: generate a key and self-signed certificate on the host.
+# provided:   install a certificate you supply (PEM content or controller files).
+# apache:     reuse the certificate the Apache role manages (apache_tls_*).
+phpipam_tls_source: selfsigned
+phpipam_tls_cert_path: /etc/pki/phpipam/phpipam.crt
+phpipam_tls_key_path: /etc/pki/phpipam/phpipam.key
+phpipam_tls_chain_path: /etc/pki/phpipam/phpipam-chain.crt
+# provided: give the PEM content (from a vault) ...
+phpipam_tls_cert: ""
+phpipam_tls_key: ""
+phpipam_tls_chain: ""
+# ... or files on the controller.
+phpipam_tls_cert_src: ""
+phpipam_tls_key_src: ""
+phpipam_tls_chain_src: ""
+# selfsigned: FIPS-approved defaults (RSA 3072, SHA-256).
+phpipam_tls_selfsigned_key_type: RSA
+phpipam_tls_selfsigned_key_size: 3072
+phpipam_tls_selfsigned_days: 825
+phpipam_tls_selfsigned_subject_alt_names: >-
+  {{ (['DNS:' ~ phpipam_server_name] + phpipam_server_aliases | map('regex_replace', '^', 'DNS:') | list
+      + (['IP:' ~ ansible_facts['default_ipv4']['address']] if ansible_facts['default_ipv4']['address'] is defined else []))
+     | unique }}
+# Regenerate the self-signed certificate this many days before it expires.
+phpipam_tls_selfsigned_renew_days: 30
+
+# =============================================================================
+# phpIPAM application settings
+# =============================================================================
+# Password for the built-in "Admin" account, set on first install (8+ chars).
+phpipam_admin_password: ""
+# Also reset it on every run if it differs (overrides changes made in the UI).
+phpipam_admin_password_enforce: false
+phpipam_site_title: phpIPAM IP address management
+phpipam_site_admin_name: Sysadmin
+phpipam_site_admin_mail: "root@{{ ansible_facts['domain'] | default('localhost', true) }}"
+phpipam_site_domain: "{{ ansible_facts['domain'] | default('localdomain', true) }}"
+phpipam_site_url: "https://{{ phpipam_server_name }}{{ phpipam_base_path }}"
+phpipam_pretty_links: true
+# Extra columns of the phpIPAM `settings` table, applied on every run.
+# Example: { enableVRF: 1, enableNAT: 1, inactivityTimeout: 1800, enforceUnique: 1 }
+phpipam_settings: {}
+
+# config.php options
+phpipam_disable_installer: true
+phpipam_debugging: false
+phpipam_session_storage: database
+phpipam_session_name: phpipam
+phpipam_cookie_samesite: Strict
+phpipam_offline_mode: false
+phpipam_disable_geoip_lookups: false
+phpipam_proxy_enabled: false
+phpipam_proxy_server: ""
+phpipam_proxy_port: 8080
+phpipam_proxy_user: ""
+phpipam_proxy_password: ""
+phpipam_ping_check_send_mail: false
+phpipam_ping_check_method: false        # false (use the scan setting), ping, pear or fping
+phpipam_discovery_check_send_mail: false
+phpipam_discovery_check_method: false
+phpipam_removed_addresses_send_mail: false
+phpipam_removed_addresses_timelimit: 604800
+phpipam_resolve_emptyonly: true
+phpipam_resolve_verbose: false
+# Raw PHP appended to config.php.
+phpipam_config_extra: ""
+
+# =============================================================================
+# API applications
+# =============================================================================
+# Each entry is a row in phpIPAM's API table:
+#   - app_id: automation          # 3-32 characters
+#     app_code: "{{ vault_token }}"  # static token for security "ssl_code" (max 32 chars)
+#     permissions: 1              # 0 disabled, 1 read, 2 read/write, 3 read/write/admin
+#     security: ssl_code          # ssl_code, ssl_token (user login), crypt or none
+#     comment: Inventory sync
+phpipam_api_apps: []
+
+# =============================================================================
+# Kea DHCP integration
+# =============================================================================
+# 1. API app for the Kea role's kea-phpipam-sync service. Set the same values
+#    on the Kea side: kea_phpipam_app_id / kea_phpipam_token.
+phpipam_kea_api_app_enabled: false
+phpipam_kea_api_app_id: kea
+phpipam_kea_api_app_token: ""
+phpipam_kea_api_app_permissions: 1
+
+# 2. Reservation database for Kea on this host's MariaDB, shared by every Kea
+#    server (kea_hosts_database) and read by phpIPAM's DHCP page.
+phpipam_kea_hosts_db_enabled: false
+phpipam_kea_hosts_db_name: kea
+phpipam_kea_hosts_db_user: kea
+phpipam_kea_hosts_db_password: ""
+# Hosts the Kea servers connect from. Remote users get REQUIRE SSL from the
+# MariaDB role, so set trust-anchor in kea_hosts_database on the Kea side.
+phpipam_kea_hosts_db_client_hosts: ["%"]
+
+# 3. phpIPAM's built-in DHCP module (Administration > DHCP), Kea flavour. It
+#    reads subnets from a Kea configuration file and leases/reservations from
+#    the Kea databases. The role writes that file from the running Kea
+#    configuration (config-get through the Control Agent) or from
+#    phpipam_kea_config.
+phpipam_kea_dhcp_module_enabled: false
+phpipam_kea_config_file: "{{ phpipam_config_dir }}/kea.conf"
+phpipam_kea_config_source: api           # api or static
+phpipam_kea_ctrl_agent_url: http://kea.example.com:8000/
+phpipam_kea_ctrl_agent_user: ""
+phpipam_kea_ctrl_agent_password: ""
+phpipam_kea_ctrl_agent_validate_certs: true
+phpipam_kea_ctrl_agent_ca_path: ""
+phpipam_kea_services: [dhcp4]
+# static source: a Kea configuration with Dhcp4 and/or Dhcp6 keys.
+phpipam_kea_config: {}
+# Database phpIPAM reads reservations from. phpIPAM connects without TLS on
+# port 3306, so it must be on this host (socket). Defaults to the local Kea
+# database when phpipam_kea_hosts_db_enabled, else what Kea reports.
+phpipam_kea_hosts_database: >-
+  {{ {'type': 'mysql', 'name': phpipam_kea_hosts_db_name, 'host': 'localhost',
+      'user': phpipam_db_user, 'password': phpipam_db_password}
+     if phpipam_kea_hosts_db_enabled | bool else {} }}
+# Leases database for phpIPAM, when Kea keeps leases in MySQL. With Kea's
+# memfile backend the leases are on the Kea servers and phpIPAM cannot show them.
+phpipam_kea_lease_database: {}
+
+# =============================================================================
+# Scheduled jobs (systemd timers)
+# =============================================================================
+phpipam_jobs:
+  - { name: ping-check, script: pingCheck.php, on_calendar: "*:0/15", enabled: true }
+  - { name: discovery-check, script: discoveryCheck.php, on_calendar: hourly, enabled: true }
+  - { name: resolve-addresses, script: resolveIPaddresses.php, on_calendar: daily, enabled: false }
+  - { name: remove-offline, script: remove_offline_addresses.php, on_calendar: daily, enabled: false }
+phpipam_jobs_extra: []
+
+# Nightly mysqldump of the phpIPAM database (local database only).
+phpipam_backup_enabled: true
+phpipam_backup_dir: "{{ phpipam_state_dir }}/backup"
+phpipam_backup_on_calendar: "*-*-* 02:30:00"
+phpipam_backup_keep_days: 14
+
+# =============================================================================
+# Performance tuning
+# =============================================================================
+# Packages phpIPAM needs (php-pear for PEAR.php, php-process for scan threads).
+phpipam_php_packages:
+  - php-cli
+  - php-fpm
+  - php-common
+  - php-gd
+  - php-gmp
+  - php-intl
+  - php-ldap
+  - php-mbstring
+  - php-mysqlnd
+  - php-opcache
+  - php-pdo
+  - php-pear
+  - php-process
+  - php-snmp
+  - php-xml
+phpipam_extra_packages: []
+
+# Dedicated PHP-FPM pool. Each child needs roughly 40-80 MB.
+phpipam_fpm_socket: /run/php-fpm/phpipam.sock
+phpipam_fpm_pm: dynamic
+phpipam_fpm_max_children: "{{ [[(ansible_facts['memtotal_mb'] | default(2048) | int) // 160, 8] | max, 50] | min }}"
+phpipam_fpm_start_servers: 4
+phpipam_fpm_min_spare_servers: 2
+phpipam_fpm_max_spare_servers: 8
+phpipam_fpm_max_requests: 500
+phpipam_fpm_request_terminate_timeout: 600
+phpipam_fpm_slowlog_timeout: 10s
+
+# PHP settings for the pool. Imports, scans and large subnets need more memory
+# and time than PHP's defaults; max_input_vars covers big permission forms.
+phpipam_php_timezone: UTC
+phpipam_php_memory_limit: 512M
+phpipam_php_max_execution_time: 600
+phpipam_php_max_input_vars: 10000
+phpipam_php_upload_max_filesize: 32M
+phpipam_php_post_max_size: 32M
+phpipam_php_opcache_memory: 128
+phpipam_php_opcache_max_files: 10000
+phpipam_php_opcache_revalidate_freq: 60
+phpipam_php_realpath_cache_size: 4096K
+phpipam_php_settings_extra: {}
+
+# MariaDB settings for phpIPAM, written to /etc/my.cnf.d/zz-phpipam.cnf when
+# the database is local. Merged over the defaults below.
+phpipam_mariadb_tuning_enabled: true
+phpipam_mariadb_tuning_defaults:
+  innodb_buffer_pool_size: "{{ [((ansible_facts['memtotal_mb'] | default(2048) | int) * 0.25) | int, 128] | max }}M"
+  # phpIPAM builds MEMORY temporary tables for subnet trees and searches.
+  tmp_table_size: 64M
+  max_heap_table_size: 64M
+  max_connections: "{{ (phpipam_fpm_max_children | int) * 2 + 50 }}"
+  table_open_cache: 2000
+phpipam_mariadb_tuning: {}
+
+# =============================================================================
+# Security
+# =============================================================================
+phpipam_selinux_manage: true
+# Extra SELinux booleans, merged over the ones the role sets.
+phpipam_selinux_booleans: {}
+# fapolicyd denies interpreters reading untrusted scripts, which includes PHP.
+# The role trusts the phpIPAM tree, config.php and its helper by hash.
+phpipam_fapolicyd_manage: true
+phpipam_fapolicyd_trust_file: phpipam

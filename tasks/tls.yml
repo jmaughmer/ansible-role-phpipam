@@ -1,0 +1,111 @@
+---
+- name: Create the certificate directory
+  ansible.builtin.file:
+    path: "{{ phpipam_tls_cert_path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: phpipam_tls_source != 'apache'
+
+- name: Install the supplied certificate
+  when: phpipam_tls_source == 'provided'
+  block:
+    - name: Install the private key
+      ansible.builtin.copy:
+        content: "{{ phpipam_tls_key if phpipam_tls_key | length > 0 else omit }}"
+        src: "{{ phpipam_tls_key_src if phpipam_tls_key | length == 0 else omit }}"
+        dest: "{{ phpipam_tls_key_path }}"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      notify: Reload phpIPAM httpd
+
+    - name: Install the certificate
+      ansible.builtin.copy:
+        content: "{{ phpipam_tls_cert if phpipam_tls_cert | length > 0 else omit }}"
+        src: "{{ phpipam_tls_cert_src if phpipam_tls_cert | length == 0 else omit }}"
+        dest: "{{ phpipam_tls_cert_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload phpIPAM httpd
+
+    - name: Install the CA chain
+      ansible.builtin.copy:
+        content: "{{ phpipam_tls_chain if phpipam_tls_chain | length > 0 else omit }}"
+        src: "{{ phpipam_tls_chain_src if phpipam_tls_chain | length == 0 else omit }}"
+        dest: "{{ phpipam_tls_chain_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+      when: __phpipam_tls.chain | length > 0
+      notify: Reload phpIPAM httpd
+
+    - name: Read the certificate
+      community.crypto.x509_certificate_info:
+        path: "{{ phpipam_tls_cert_path }}"
+      register: __phpipam_cert_info
+
+    - name: Read the private key
+      community.crypto.openssl_privatekey_info:
+        path: "{{ phpipam_tls_key_path }}"
+      register: __phpipam_key_info
+      no_log: true
+
+    - name: Check the key matches the certificate
+      ansible.builtin.assert:
+        that:
+          - __phpipam_cert_info.public_key == __phpipam_key_info.public_key
+          - not __phpipam_cert_info.expired
+        fail_msg: "{{ phpipam_tls_cert_path }} is expired or does not match {{ phpipam_tls_key_path }}."
+        quiet: true
+
+- name: Create a self-signed certificate
+  when: phpipam_tls_source == 'selfsigned'
+  block:
+    - name: Create the private key
+      community.crypto.openssl_privatekey:
+        path: "{{ phpipam_tls_key_path }}"
+        type: "{{ phpipam_tls_selfsigned_key_type }}"
+        size: "{{ phpipam_tls_selfsigned_key_size if phpipam_tls_selfsigned_key_type == 'RSA' else omit }}"
+        curve: "{{ 'secp384r1' if phpipam_tls_selfsigned_key_type == 'ECC' else omit }}"
+        owner: root
+        group: root
+        mode: "0600"
+      notify: Reload phpIPAM httpd
+
+    - name: Create the signing request
+      community.crypto.openssl_csr_pipe:
+        privatekey_path: "{{ phpipam_tls_key_path }}"
+        common_name: "{{ phpipam_server_name }}"
+        subject_alt_name: "{{ phpipam_tls_selfsigned_subject_alt_names }}"
+        basic_constraints: ["CA:FALSE"]
+        key_usage: [digitalSignature, keyEncipherment]
+        extended_key_usage: [serverAuth]
+      register: __phpipam_csr
+      changed_when: false
+
+    - name: Check whether the certificate needs renewing
+      community.crypto.x509_certificate_info:
+        path: "{{ phpipam_tls_cert_path }}"
+        valid_at:
+          renew: "+{{ phpipam_tls_selfsigned_renew_days }}d"
+      register: __phpipam_selfsigned_info
+      failed_when: false
+
+    - name: Sign the certificate
+      community.crypto.x509_certificate:
+        path: "{{ phpipam_tls_cert_path }}"
+        csr_content: "{{ __phpipam_csr.csr }}"
+        privatekey_path: "{{ phpipam_tls_key_path }}"
+        provider: selfsigned
+        selfsigned_digest: sha256
+        selfsigned_not_after: "+{{ phpipam_tls_selfsigned_days }}d"
+        selfsigned_not_before: "-1d"
+        force: "{{ __phpipam_selfsigned_info.valid_at.renew is defined and not __phpipam_selfsigned_info.valid_at.renew }}"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload phpIPAM httpd

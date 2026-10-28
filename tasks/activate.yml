@@ -1,0 +1,26 @@
+---
+- name: Point the web root at the release
+  ansible.builtin.file:
+    src: "{{ __phpipam_release_dir }}"
+    dest: "{{ phpipam_web_root }}"
+    state: link
+    force: true
+  notify: Restart phpIPAM php-fpm
+
+- name: List installed releases
+  ansible.builtin.find:
+    paths: "{{ phpipam_releases_dir }}"
+    patterns: "phpipam-*"
+    file_type: directory
+  register: __phpipam_releases
+
+- name: Remove old releases
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ __phpipam_others[: [(__phpipam_others | length) - (__phpipam_keep | int), 0] | max] }}"
+  vars:
+    __phpipam_others: >-
+      {{ __phpipam_releases.files | map(attribute='path') | reject('equalto', __phpipam_release_dir)
+         | community.general.version_sort }}
+    __phpipam_keep: "{{ [phpipam_keep_releases | int - 1, 0] | max }}"

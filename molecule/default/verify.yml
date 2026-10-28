@@ -1,0 +1,196 @@
+---
+- name: Verify
+  hosts: all
+  gather_facts: false
+  vars:
+    base_url: https://phpipam.example.test
+    admin_password: "Molecule-Admin-2026!"
+    kea_token: "MoleculeKeaToken0123456789abcdef"
+    db_login: &db_login
+      login_user: phpipam
+      login_password: "Molecule-DB-pass-2026!"
+      login_unix_socket: /var/lib/mysql/mysql.sock
+  tasks:
+    - name: Collect service state
+      ansible.builtin.service_facts:
+
+    - name: Assert services are running
+      ansible.builtin.assert:
+        that: ansible_facts.services[item ~ '.service'].state == 'running'
+        fail_msg: "{{ item }} is not running"
+      loop: [mariadb, httpd, php-fpm]
+
+    # service_facts only lists services, not timers.
+    - name: Assert timers are enabled  # noqa: command-instead-of-module
+      ansible.builtin.command: "systemctl is-enabled {{ item }}"
+      loop: [phpipam-ping-check.timer, phpipam-discovery-check.timer, phpipam-backup.timer]
+      changed_when: false
+
+    - name: Assert disabled jobs are not installed
+      ansible.builtin.stat:
+        path: /etc/systemd/system/phpipam-resolve-addresses.timer
+      register: resolve_timer
+      failed_when: resolve_timer.stat.exists
+
+    - name: Check the database is at the code version
+      ansible.builtin.command: php /usr/local/libexec/phpipam-ansible.php /var/www/phpipam status
+      register: status
+      changed_when: false
+      failed_when: not (status.stdout | from_json).current
+
+    - name: Plain HTTP redirects to HTTPS
+      ansible.builtin.uri:
+        url: http://phpipam.example.test/
+        follow_redirects: none
+        status_code: 301
+      register: redirect
+      failed_when: redirect.location is not match('https://phpipam.example.test/')
+
+    - name: The login page is served over HTTPS
+      ansible.builtin.uri:
+        url: "{{ base_url }}/"
+        validate_certs: false
+        return_content: true
+      register: login
+      failed_when: >-
+        login.status != 200 or 'phpipam' not in login.content | lower
+        or 'max-age=' not in login.strict_transport_security | default('')
+
+    - name: Internal paths are not served
+      ansible.builtin.uri:
+        url: "{{ base_url }}/{{ item }}"
+        validate_certs: false
+        status_code: 403
+      loop:
+        - config.php
+        - db/SCHEMA.sql
+        - functions/scripts/pingCheck.php
+        - install/
+        - upgrade/
+        - app/admin/import-export/upload/
+
+    - name: The Kea sync token can read sections through the API
+      ansible.builtin.uri:
+        url: "{{ base_url }}/api/kea/sections/"
+        validate_certs: false
+        headers:
+          token: "{{ kea_token }}"
+      register: sections
+      failed_when: not sections.json.success or sections.json.data | length == 0
+
+    - name: The Kea sync token is read-only
+      ansible.builtin.uri:
+        url: "{{ base_url }}/api/kea/sections/"
+        method: POST
+        validate_certs: false
+        headers:
+          token: "{{ kea_token }}"
+        body_format: json
+        body: { name: molecule }
+        status_code: [401, 403, 500]
+
+    - name: The Admin password works through the API
+      ansible.builtin.uri:
+        url: "{{ base_url }}/api/molecule/user/"
+        method: POST
+        validate_certs: false
+        url_username: Admin
+        url_password: "{{ admin_password }}"
+        force_basic_auth: true
+      register: api_login
+      failed_when: not api_login.json.success or api_login.json.data.token | length == 0
+
+    - name: Read the phpIPAM settings
+      ansible.mysql.mysql_query:
+        <<: *db_login
+        login_db: phpipam
+        query: SELECT siteURL, prettyLinks, enableVRF, enableDHCP, DHCP, api, inactivityTimeout FROM settings WHERE id = 1
+      register: settings
+
+    - name: Check the settings were applied
+      ansible.builtin.assert:
+        that:
+          - row.siteURL == 'https://phpipam.example.test/'
+          - row.prettyLinks == 'Yes'
+          - row.enableVRF | int == 1
+          - row.enableDHCP | int == 1
+          - (row.DHCP | from_json).type == 'kea'
+          - (row.DHCP | from_json).settings.file == '/etc/phpipam/kea.conf'
+          - row.inactivityTimeout | int == 1800
+      vars:
+        row: "{{ settings.query_result[0][0] }}"
+
+    - name: The phpIPAM user can read the Kea reservation database
+      ansible.mysql.mysql_query:
+        <<: *db_login
+        login_db: kea
+        query: SELECT DATABASE() AS db
+
+    - name: Read the Kea configuration written for phpIPAM
+      ansible.builtin.slurp:
+        src: /etc/phpipam/kea.conf
+      register: kea_conf
+
+    - name: Check the Kea configuration
+      ansible.builtin.assert:
+        that:
+          - "'#' not in raw"
+          - conf.Dhcp4.subnet4 | map(attribute='subnet') | list == ['192.0.2.0/24', '198.51.100.0/24']
+          - "conf.Dhcp4['subnet4'][0]['user-context']['note'] == 'lab #1'"
+          - conf.Dhcp4['hosts-database'].name == 'kea'
+          - conf.Dhcp4['hosts-database'].host == 'localhost'
+          - conf.Dhcp4['lease-database'].type == 'memfile'
+      vars:
+        raw: "{{ kea_conf.content | b64decode }}"
+        conf: "{{ raw | from_json }}"
+
+    - name: Read the certificate
+      community.crypto.x509_certificate_info:
+        path: /etc/pki/phpipam/phpipam.crt
+      register: cert
+
+    - name: Check the self-signed certificate
+      ansible.builtin.assert:
+        that:
+          - "'DNS:phpipam.example.test' in cert.subject_alt_name"
+          - "'DNS:ipam.example.test' in cert.subject_alt_name"
+          - cert.public_key_data.size >= 3072
+          - cert.signature_algorithm is search('sha256')
+
+    - name: Read the fapolicyd trust file
+      ansible.builtin.slurp:
+        src: /etc/fapolicyd/trust.d/phpipam
+      register: trust
+
+    - name: Check config.php, the helper and the release are trusted
+      ansible.builtin.assert:
+        that:
+          - lines | select('match', '^/etc/phpipam/config.php [0-9]+ [0-9a-f]{64}$') | list | length == 1
+          - lines | select('match', '^/usr/local/libexec/phpipam-ansible.php ') | list | length == 1
+          - lines | select('match', '^/var/www/phpipam-releases/phpipam-[0-9.]+/index.php ') | list | length == 1
+      vars:
+        lines: "{{ (trust.content | b64decode).splitlines() }}"
+
+    - name: Run the ping check job once
+      ansible.builtin.systemd_service:
+        name: phpipam-ping-check.service
+        state: started
+
+    # The scripts exit 0 even on fatal errors, so check what they printed.
+    - name: Check the ping check output
+      ansible.builtin.command: journalctl -u phpipam-ping-check.service -b --no-pager -o cat
+      register: ping_log
+      changed_when: false
+      failed_when: ping_log.stdout is search('Fatal|PHP (Warning|Error|Fatal)')
+
+    - name: Run a backup
+      ansible.builtin.systemd_service:
+        name: phpipam-backup.service
+        state: started
+
+    - name: Find backups
+      ansible.builtin.find:
+        paths: /var/lib/phpipam/backup
+        patterns: "phpipam-*.sql.gz"
+      register: backups
+      failed_when: backups.matched == 0

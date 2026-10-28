@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Back up the phpIPAM database
+After=mariadb.service
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/bin/bash -o pipefail -c 'mysqldump --single-transaction --routines --triggers {{ phpipam_db_name }} | gzip > {{ phpipam_backup_dir }}/phpipam-$(date +%%Y%%m%%d-%%H%%M%%S).sql.gz'
+ExecStartPost=/usr/bin/find {{ phpipam_backup_dir }} -name 'phpipam-*.sql.gz' -mtime +{{ phpipam_backup_keep_days }} -delete
+Nice=10
+IOSchedulingClass=idle
+PrivateTmp=true

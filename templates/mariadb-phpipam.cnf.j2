@@ -1,0 +1,6 @@
+# {{ ansible_managed }}
+# MariaDB settings for phpIPAM. Loaded last, so these win over earlier files.
+[mariadb]
+{% for key, value in __phpipam_mariadb_tuning.items() %}
+{{ key }} = {{ value }}
+{% endfor %}

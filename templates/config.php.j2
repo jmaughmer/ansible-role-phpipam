@@ -1,0 +1,90 @@
+<?php
+{% macro php(value) -%}
+{%- if value is boolean -%}{{ 'true' if value else 'false' }}
+{%- elif value is number -%}{{ value }}
+{%- else -%}'{{ value | string | replace('\\', '\\\\') | replace("'", "\\'") }}'
+{%- endif -%}
+{%- endmacro -%}
+/**
+ * {{ ansible_managed }}
+ *
+ * phpIPAM {{ phpipam_version }} configuration, written by ansible-role-phpipam.
+ */
+
+$disable_installer = {{ php(phpipam_disable_installer | bool) }};
+
+/* Database */
+$db['host'] = {{ php(phpipam_db_host) }};
+$db['user'] = {{ php(phpipam_db_user) }};
+$db['pass'] = {{ php(phpipam_db_password) }};
+$db['name'] = {{ php(phpipam_db_name) }};
+$db['port'] = {{ phpipam_db_port | int }};
+$db['webhost'] = '';
+$db['ssl'] = {{ php(phpipam_db_tls | bool) }};
+{% if phpipam_db_tls | bool %}
+$db['ssl_ca'] = {{ php(phpipam_db_tls_ca) }};
+{%   if phpipam_db_tls_cert | length > 0 %}
+$db['ssl_cert'] = {{ php(phpipam_db_tls_cert) }};
+$db['ssl_key'] = {{ php(phpipam_db_tls_key) }};
+{%   endif %}
+$db['ssl_verify'] = {{ php(phpipam_db_tls_verify | bool) }};
+{% endif %}
+$db['tmptable_engine_type'] = {{ php(phpipam_db_tmptable_engine) }};
+$db['use_cte'] = 1;
+
+/* Reverse proxy */
+$trust_x_forwarded_headers = {{ php(phpipam_trust_proxy_headers | bool) }};
+
+/* Scheduled scripts */
+$config['ping_check_send_mail']        = {{ php(phpipam_ping_check_send_mail | bool) }};
+$config['ping_check_method']           = {{ php(phpipam_ping_check_method if phpipam_ping_check_method else false) }};
+$config['discovery_check_send_mail']   = {{ php(phpipam_discovery_check_send_mail | bool) }};
+$config['discovery_check_method']      = {{ php(phpipam_discovery_check_method if phpipam_discovery_check_method else false) }};
+$config['removed_addresses_send_mail'] = {{ php(phpipam_removed_addresses_send_mail | bool) }};
+$config['removed_addresses_timelimit'] = {{ phpipam_removed_addresses_timelimit | int }};
+$config['resolve_emptyonly']           = {{ php(phpipam_resolve_emptyonly | bool) }};
+$config['resolve_verbose']             = {{ php(phpipam_resolve_verbose | bool) }};
+$config['disable_main_login_form']     = false;
+
+$debugging = {{ php(phpipam_debugging | bool) }};
+
+/* API: HTTPS only */
+$api_allow_unsafe = false;
+$api_stringify_results = false;
+
+/* Sessions */
+$phpsessname = {{ php(phpipam_session_name) }};
+$cookie_samesite = {{ php(phpipam_cookie_samesite) }};
+$session_storage = {{ php(phpipam_session_storage) }};
+
+if(!defined('BASE'))
+define('BASE', {{ php(phpipam_base_path) }});
+
+if(!defined('MCUNIQUE'))
+define('MCUNIQUE', "section");
+
+$private_subpages = array();
+
+/* Outbound proxy */
+$proxy_enabled  = {{ php(phpipam_proxy_enabled | bool) }};
+$proxy_server   = {{ php(phpipam_proxy_server) }};
+$proxy_port     = {{ php(phpipam_proxy_port | string) }};
+$proxy_user     = {{ php(phpipam_proxy_user) }};
+$proxy_pass     = {{ php(phpipam_proxy_password) }};
+$proxy_use_auth = {{ php(phpipam_proxy_user | length > 0) }};
+$offline_mode   = {{ php(phpipam_offline_mode | bool) }};
+
+$disable_geoip_lookups = {{ php(phpipam_disable_geoip_lookups | bool) }};
+
+$config['logo_width']             = 220;
+$config['requests_public']        = false;
+$config['split_ip_custom_fields'] = false;
+$config['footer_message']         = "";
+
+$php_cli_binary = '/usr/bin/php';
+$mysqldump_cli_binary = '/usr/bin/mysqldump';
+{% if phpipam_config_extra | length > 0 %}
+
+/* phpipam_config_extra */
+{{ phpipam_config_extra }}
+{% endif %}
