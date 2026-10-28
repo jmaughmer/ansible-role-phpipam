@@ -86,7 +86,7 @@ main() {
   if [[ " ${targets[*]} " == *" el8 "* ]]; then
     make_venv "$VENV_EL8" "ansible-core>=2.16,<2.17" \
       "ansible.posix:>=1.5.0,<2.0.0" "community.general:>=8.0.0,<11.0.0" "containers.podman:>=1.10.0,<1.17.0" \
-      "ansible.mysql:>=4.2.1,<6.0.0" "community.crypto:>=2.15.0,<3.0.0"
+      "ansible.mysql:>=4.2.1,<6.0.0" "community.mysql:>=3.8.0,<6.0.0" "community.crypto:>=2.15.0,<3.0.0"
   fi
 
   local failed=()
