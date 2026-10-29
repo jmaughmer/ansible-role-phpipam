@@ -3,17 +3,22 @@
 dependency:
   name: galaxy
   enabled: false
+# Molecule would otherwise install requirements.yml's roles on its own and
+# fail because scripts/test.sh already put them on ANSIBLE_ROLES_PATH.
+prerun: false
 driver:
   name: podman
+# Names end in TEST_RUN_ID, which scripts/test.sh sets per checkout, so
+# several checkouts can run the same scenario at once.
 platforms:
-  - name: phpipam-el9
+  - name: phpipam-el9-${TEST_RUN_ID:-local}
     image: docker.io/almalinux/9-init
     pre_build_image: true
     command: /sbin/init
     systemd: always
     privileged: true
     rootless: true
-  - name: phpipam-el10
+  - name: phpipam-el10-${TEST_RUN_ID:-local}
     image: docker.io/almalinux/10-init
     pre_build_image: true
     command: /sbin/init

@@ -41,6 +41,12 @@
     ErrorLog logs/phpipam_error_log
     CustomLog logs/phpipam_access_log combined
 
+    # The web root is a symlink to the active release. Apache 2.4.37 (EL8)
+    # checks FollowSymLinks on the directory that holds the link.
+    <Directory "{{ root | dirname }}">
+        Options FollowSymLinks
+    </Directory>
+
     <Directory "{{ root }}">
         Options FollowSymLinks
         # The .htaccess rules shipped with phpIPAM are repeated here, so

@@ -2,6 +2,14 @@
 - name: Prepare
   hosts: all
   tasks:
+    # The almalinux init images have no iproute. Without it the first run has
+    # no default_ipv4 fact, the role's packages then pull iproute in, and the
+    # second run adds an IP SAN and reissues the self-signed certificate.
+    - name: Install iproute so network facts are there from the first run
+      ansible.builtin.dnf:
+        name: iproute
+        state: present
+
     - name: Install fapolicyd (left stopped) so the role writes its trust file
       ansible.builtin.dnf:
         name: fapolicyd

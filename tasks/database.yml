@@ -68,10 +68,16 @@
       changed_when: __phpipam_admin_password.stdout is search('changed')
       no_log: true
 
+    # Values travel base64-encoded: ansible-core 2.16 turns a template result
+    # that looks like a dict (the DHCP setting's JSON) back into a dict.
     - name: Apply phpIPAM settings
       ansible.mysql.mysql_query:
-        query: "UPDATE `settings` SET `{{ item.key }}` = %s WHERE `id` = 1"
-        positional_args: ["{{ item.value }}"]
+        query: "UPDATE `settings` SET `{{ item.key }}` = FROM_BASE64(%s) WHERE `id` = 1"
+        positional_args:
+          - >-
+            {{ ((item.value | int | string) if item.value is boolean
+                else item.value if item.value is string
+                else (item.value | to_json)) | b64encode }}
       loop: "{{ __phpipam_settings | dict2items }}"
       loop_control:
         label: "{{ item.key }}"

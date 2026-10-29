@@ -2,6 +2,9 @@
 # The sibling roles get their lists merged with whatever the inventory already
 # sets, so a host can carry other databases, users or PHP packages as well.
 # set_fact pins the merged values before the include overrides the names.
+# phpIPAM has no socket setting, so PHP reaches MariaDB through the default
+# socket inside the data directory; 0751 lets apache traverse to it without
+# listing the directory.
 - name: Merge the database and user lists for the MariaDB role
   ansible.builtin.set_fact:
     __phpipam_mariadb_databases: >-
@@ -30,6 +33,7 @@
     mariadb_innodb_buffer_pool_size: "{{ __phpipam_mariadb_tuning.innodb_buffer_pool_size }}"
     mariadb_max_connections: "{{ __phpipam_mariadb_tuning.max_connections }}"
     mariadb_mysqld_options: "{{ __phpipam_mariadb_mysqld_options }}"
+    mariadb_datadir_mode: "0751"
   when: phpipam_manage_mariadb | bool and phpipam_mariadb_tuning_enabled | bool
 
 - name: Run the MariaDB role
@@ -38,6 +42,7 @@
   vars:
     mariadb_databases: "{{ __phpipam_mariadb_databases }}"
     mariadb_users: "{{ __phpipam_mariadb_users }}"
+    mariadb_datadir_mode: "0751"
   when: phpipam_manage_mariadb | bool and not (phpipam_mariadb_tuning_enabled | bool)
 
 - name: Merge the PHP and SELinux settings for the Apache role

@@ -134,15 +134,16 @@
     - name: Check the Kea configuration
       ansible.builtin.assert:
         that:
-          - "'#' not in raw"
+          - "'#' not in kea_conf.content | b64decode"
           - conf.Dhcp4.subnet4 | map(attribute='subnet') | list == ['192.0.2.0/24', '198.51.100.0/24']
           - "conf.Dhcp4['subnet4'][0]['user-context']['note'] == 'lab #1'"
           - conf.Dhcp4['hosts-database'].name == 'kea'
           - conf.Dhcp4['hosts-database'].host == 'localhost'
           - conf.Dhcp4['lease-database'].type == 'memfile'
       vars:
-        raw: "{{ kea_conf.content | b64decode }}"
-        conf: "{{ raw | from_json }}"
+        # One template: ansible-core 2.16 would turn a decoded JSON string
+        # held in its own variable into a dict before from_json saw it.
+        conf: "{{ kea_conf.content | b64decode | from_json }}"
 
     - name: Read the certificate
       community.crypto.x509_certificate_info:

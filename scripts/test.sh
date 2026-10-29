@@ -13,6 +13,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROLE_NAME="$(basename "$ROOT")"
+# Suffix for container and network names (see molecule/*/molecule.yml), so
+# other checkouts can test at the same time. It is stable per checkout, so a
+# later run's destroy removes what an interrupted run left behind.
+export TEST_RUN_ID="${TEST_RUN_ID:-$(printf '%s' "$ROOT" | sha1sum | cut -c1-8)}"
 CACHE="${PHPIPAM_TEST_CACHE:-$ROOT/.cache/test}"
 VENV="$CACHE/venv"            # current ansible-core: lint, EL9/EL10
 VENV_EL8="$CACHE/venv-el8"    # ansible-core 2.16: EL8 targets (Python 3.6 dnf)
@@ -61,7 +65,12 @@ install_roles() {
 
 run_lint() {
   log "yamllint + ansible-lint"
-  (cd "$ROOT" && "$VENV/bin/yamllint" . && "$VENV/bin/ansible-lint")
+  # --offline with the cached collections and roles: ansible-lint would
+  # otherwise install requirements.yml into ~/.ansible, which other projects'
+  # tests share.
+  (cd "$ROOT" && "$VENV/bin/yamllint" . &&
+    ANSIBLE_COLLECTIONS_PATH="$VENV/collections" ANSIBLE_ROLES_PATH="$ROLES" \
+      "$VENV/bin/ansible-lint" --offline)
 }
 
 run_scenario() { # <venv> <scenario>
