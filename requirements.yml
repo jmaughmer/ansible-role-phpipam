@@ -2,15 +2,17 @@
 # Install with:
 #   ansible-galaxy role install -r requirements.yml
 #   ansible-galaxy collection install -r requirements.yml
+# The roles are pinned to commits, so a push to their main branch can't change
+# what this role deploys. Move the pins forward deliberately (and re-test).
 roles:
   - name: jmaughmer.mariadb
     src: https://github.com/jmaughmer/ansible-role-mariadb.git
     scm: git
-    version: main
+    version: 9521c29c21b617c30bccb3224156a98f3d26cd3d
   - name: jmaughmer.apache
     src: https://github.com/jmaughmer/ansible-role-apache.git
     scm: git
-    version: main
+    version: 8c49c7f58de048e0bf4ff744902d5a6a70e94f94
 collections:
   - name: ansible.posix
     version: ">=1.5.0"

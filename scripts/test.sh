@@ -5,8 +5,8 @@
 # Rootless podman is used by default; if rootless systemd containers don't
 # work on your WSL setup, run the script with sudo for rootful podman.
 #
-# The jmaughmer.mariadb and jmaughmer.apache roles are fetched from GitHub
-# (requirements.yml) on every run, so branch updates are picked up.
+# The jmaughmer.mariadb and jmaughmer.apache roles are fetched from GitHub on
+# every run, at the commits requirements.yml pins.
 #
 # Usage: scripts/test.sh [lint|default|el8|all ...]   (default: all)
 set -euo pipefail

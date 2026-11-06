@@ -9,5 +9,5 @@ opcache.enable_cli = 0
 opcache.memory_consumption = {{ phpipam_php_opcache_memory }}
 opcache.interned_strings_buffer = 16
 opcache.max_accelerated_files = {{ phpipam_php_opcache_max_files }}
-opcache.validate_timestamps = 1
+opcache.validate_timestamps = {{ 1 if phpipam_php_opcache_validate_timestamps | bool else 0 }}
 opcache.revalidate_freq = {{ phpipam_php_opcache_revalidate_freq }}

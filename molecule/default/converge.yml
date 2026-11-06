@@ -35,6 +35,16 @@
               - { id: 2, subnet: 198.51.100.0/24 }
         lease-database: { type: memfile, name: /var/lib/kea/kea-leases4.csv }
     # fapolicyd is installed (not started) by prepare.yml to test the trust file.
+    phpipam_backup_encrypt_cert: "{{ backup_cert | default('') }}"
+  pre_tasks:
+    - name: Read the backup recipient certificate prepare.yml made
+      ansible.builtin.slurp:
+        src: /root/backup-recipient.crt
+      register: backup_cert_file
+
+    - name: Hand it to the role
+      ansible.builtin.set_fact:
+        backup_cert: "{{ backup_cert_file.content | b64decode }}"
   tasks:
     - name: Include the role
       ansible.builtin.include_role:

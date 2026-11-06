@@ -4,11 +4,19 @@ __phpipam_db_local: "{{ phpipam_db_host == 'localhost' }}"
 __phpipam_helper: /usr/local/libexec/phpipam-ansible.php
 __phpipam_selinux_enabled: "{{ ansible_facts['selinux']['status'] | default('disabled') == 'enabled' }}"
 
-# Directories inside a release that phpIPAM writes to (logo and CSV uploads).
+# SHA-256 of each release tarball, from the "digest" GitHub shows for the
+# release asset. Add an entry when moving to a new version.
+__phpipam_archive_checksums:
+  "1.8.2": sha256:12745b9cc9f937b219043cc39ee6533b95f9e8ed8b4381ea6f6d96005487bf8d
+  "1.8.3": sha256:2fc737da5a04a842cda097f609c4db85c808270eaad5949c4ec03d10f874556d
+
+# Directories inside a release that phpIPAM writes CSV uploads to. Nothing in
+# them is trusted by fapolicyd or served.
 __phpipam_writable_dirs:
-  - css/images/logo
   - app/admin/import-export/upload
   - app/subnets/import-subnet/upload
+# Inside each release, a link to phpipam_logo_dir.
+__phpipam_logo_link: css/images/logo
 
 __phpipam_tls_files:
   selfsigned:
@@ -48,7 +56,7 @@ __phpipam_settings: "{{ __phpipam_settings_base | combine(__phpipam_settings_api
 
 # Databases and users handed to the MariaDB role.
 __phpipam_db_privs: >-
-  {{ {phpipam_db_name ~ '.*': 'ALL'}
+  {{ {phpipam_db_name ~ '.*': phpipam_db_privileges}
      | combine({phpipam_kea_hosts_db_name ~ '.*': 'SELECT'} if phpipam_kea_hosts_db_enabled | bool else {}) }}
 __phpipam_mariadb_databases_own: >-
   {{ [{'name': phpipam_db_name, 'encoding': 'utf8mb4', 'collation': 'utf8mb4_unicode_ci'}]
@@ -58,7 +66,9 @@ __phpipam_mariadb_users_own: >-
   {{ [{'name': phpipam_db_user, 'host': 'localhost', 'password': phpipam_db_password, 'priv': __phpipam_db_privs}]
      + (phpipam_kea_hosts_db_client_hosts | map('community.general.dict_kv', 'host')
         | map('combine', {'name': phpipam_kea_hosts_db_user, 'password': phpipam_kea_hosts_db_password,
-                          'priv': {phpipam_kea_hosts_db_name ~ '.*': 'ALL'}}) | list
+                          'priv': {phpipam_kea_hosts_db_name ~ '.*': 'ALL'}},
+               ({'tls_requires': phpipam_kea_hosts_db_tls_requires}
+                if phpipam_kea_hosts_db_tls_requires | length > 0 else {})) | list
         if phpipam_kea_hosts_db_enabled | bool else []) }}
 
 # Only booleans phpIPAM needs are switched on; nothing is switched off.
@@ -79,3 +89,15 @@ __phpipam_fapolicyd_paths:
   - "{{ phpipam_releases_dir }}"
   - "{{ phpipam_config_dir }}/config.php"
   - "{{ __phpipam_helper }}"
+# Never trusted, whatever lands in them: the upload folders PHP can write to.
+# (The logo folder lives outside the releases, so it is not hashed at all.)
+__phpipam_fapolicyd_exclude: "{{ __phpipam_writable_dirs | map('regex_replace', '^', '/') | map('regex_replace', '$', '/') | list }}"
+
+# Backups are written as the backup user, encrypted when a certificate is set.
+__phpipam_backup_cert: /etc/pki/phpipam/backup-recipient.crt
+__phpipam_backup_ext: "{{ '.sql.gz.cms' if phpipam_backup_encrypt_cert | length > 0 else '.sql.gz' }}"
+# Appended to "mysqldump ... | gzip" in both backup paths.
+__phpipam_backup_encrypt_cmd: >-
+  {{ ('| openssl cms -encrypt -binary -stream -aes-256-cbc -outform DER -recip '
+      ~ __phpipam_backup_cert ~ ' -keyopt rsa_padding_mode:oaep')
+     if phpipam_backup_encrypt_cert | length > 0 else '' }}

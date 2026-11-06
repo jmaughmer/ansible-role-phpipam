@@ -5,9 +5,30 @@ After=mariadb.service
 
 [Service]
 Type=oneshot
+# Logs in to MariaDB over the socket as itself (unix_socket), read-only.
+User={{ phpipam_backup_user }}
+Group={{ phpipam_backup_user }}
 UMask=0077
-ExecStart=/bin/bash -o pipefail -c 'mysqldump --single-transaction --routines --triggers {{ phpipam_db_name }} | gzip > {{ phpipam_backup_dir }}/phpipam-$(date +%%Y%%m%%d-%%H%%M%%S).sql.gz'
-ExecStartPost=/usr/bin/find {{ phpipam_backup_dir }} -name 'phpipam-*.sql.gz' -mtime +{{ phpipam_backup_keep_days }} -delete
+ExecStart=/bin/bash -o pipefail -c 'mysqldump --single-transaction --triggers --no-tablespaces {{ phpipam_db_name }} | gzip {{ __phpipam_backup_encrypt_cmd }} > {{ phpipam_backup_dir }}/phpipam-$(date +%%Y%%m%%d-%%H%%M%%S){{ __phpipam_backup_ext }}'
+ExecStartPost=/usr/bin/find {{ phpipam_backup_dir }} -name 'phpipam-*{{ __phpipam_backup_ext }}' -mtime +{{ phpipam_backup_keep_days }} -delete
 Nice=10
 IOSchedulingClass=idle
+
+# Sandboxing: nothing but the backup directory is writable.
+NoNewPrivileges=true
+CapabilityBoundingSet=
+ProtectSystem=strict
+ReadWritePaths={{ phpipam_backup_dir }}
+ProtectHome=true
 PrivateTmp=true
+PrivateDevices=true
+PrivateNetwork=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service

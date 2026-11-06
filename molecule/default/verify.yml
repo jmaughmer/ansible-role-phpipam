@@ -69,6 +69,25 @@
         - upgrade/
         - app/admin/import-export/upload/
 
+    - name: Find the login page's first stylesheet
+      ansible.builtin.set_fact:
+        stylesheet: >-
+          {{ login.content | regex_findall('href="([^"]+[.]css[^"]*)"') | first }}
+
+    - name: Static files may be cached
+      ansible.builtin.uri:
+        url: "{{ base_url }}/{{ stylesheet | regex_replace('^/', '') }}"
+        validate_certs: false
+      register: css
+      failed_when: css.status != 200 or 'max-age=' not in css.cache_control | default('')
+
+    # The uri module speaks HTTP/1.1 only.
+    - name: Ask for the login page over HTTP/2
+      ansible.builtin.command: curl -sk --http2 -o /dev/null -w '%{http_version}' {{ base_url }}/  # noqa: command-instead-of-module
+      register: h2
+      changed_when: false
+      failed_when: h2.stdout != '2'
+
     - name: The Kea sync token can read sections through the API
       ansible.builtin.uri:
         url: "{{ base_url }}/api/kea/sections/"
@@ -119,6 +138,24 @@
           - row.inactivityTimeout | int == 1800
       vars:
         row: "{{ settings.query_result[0][0] }}"
+
+    - name: Read the phpIPAM user's rights
+      ansible.mysql.mysql_query:
+        <<: *db_login
+        login_db: phpipam
+        query: SHOW GRANTS FOR CURRENT_USER
+      register: grants
+
+    - name: Assert the phpIPAM user has day-to-day rights only
+      ansible.builtin.assert:
+        that:
+          - lines | select('search', 'ON `phpipam`') | list | length == 1
+          - lines | select('search', 'ALL PRIVILEGES ON `phpipam`') | list | length == 0
+          - lines | select('search', 'DROP.* ON `phpipam`') | list | length == 0
+          - lines | select('search', 'SELECT, INSERT, UPDATE, DELETE.* ON `phpipam`') | list | length == 1
+        fail_msg: "{{ lines }}"
+      vars:
+        lines: "{{ grants.query_result[0] | map('dict2items') | map('first') | map(attribute='value') | list }}"
 
     - name: The phpIPAM user can read the Kea reservation database
       ansible.mysql.mysql_query:
@@ -172,6 +209,76 @@
       vars:
         lines: "{{ (trust.content | b64decode).splitlines() }}"
 
+    - name: Check nothing in the upload folders is trusted
+      ansible.builtin.assert:
+        that: lines | select('search', '/upload/') | list | length == 0
+      vars:
+        lines: "{{ (trust.content | b64decode).splitlines() }}"
+
+    # A script that lands in an upload folder must not become trusted on the
+    # next run, nor be served.
+    - name: Plant a PHP file in an upload folder
+      ansible.builtin.copy:
+        dest: /var/www/phpipam/app/admin/import-export/upload/planted.php
+        content: "<?php echo 'planted'; ?>\n"
+        mode: "0644"
+
+    - name: Gather the facts the fapolicyd tasks use
+      ansible.builtin.setup:
+        gather_subset: [min]
+
+    - name: Rebuild the fapolicyd trust as the role does
+      ansible.builtin.include_role:
+        name: ansible-role-phpipam
+        tasks_from: fapolicyd.yml
+
+    - name: Read the rebuilt trust file
+      ansible.builtin.slurp:
+        src: /etc/fapolicyd/trust.d/phpipam
+      register: trust_again
+
+    - name: Check the planted file is not trusted
+      ansible.builtin.assert:
+        that: "'planted.php' not in (trust_again.content | b64decode)"
+
+    - name: The planted file is not served
+      ansible.builtin.uri:
+        url: "{{ base_url }}/app/admin/import-export/upload/planted.php"
+        validate_certs: false
+        status_code: 403
+
+    - name: Remove the planted file
+      ansible.builtin.file:
+        path: /var/www/phpipam/app/admin/import-export/upload/planted.php
+        state: absent
+
+    - name: Look at the release's logo folder
+      ansible.builtin.stat:
+        path: /var/www/phpipam/css/images/logo
+      register: logo
+
+    - name: Check logos live outside the release
+      ansible.builtin.assert:
+        that:
+          - logo.stat.islnk
+          - logo.stat.lnk_source == '/var/lib/phpipam/logo'
+
+    - name: Read the PHP-FPM pool and PHP settings
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      loop: [/etc/php-fpm.d/phpipam.conf, /etc/php.d/90-phpipam.ini]
+      register: php_conf
+
+    - name: Check open_basedir, URL fopen and opcache settings
+      ansible.builtin.assert:
+        that:
+          - "'php_admin_value[open_basedir] = /var/www/phpipam-releases:' in pool"
+          - "'php_admin_flag[allow_url_fopen] = off' in pool"
+          - "'opcache.validate_timestamps = 0' in ini"
+      vars:
+        pool: "{{ php_conf.results[0].content | b64decode }}"
+        ini: "{{ php_conf.results[1].content | b64decode }}"
+
     - name: Run the ping check job once
       ansible.builtin.systemd_service:
         name: phpipam-ping-check.service
@@ -184,6 +291,37 @@
       changed_when: false
       failed_when: ping_log.stdout is search('Fatal|PHP (Warning|Error|Fatal)')
 
+    # The test subnets have no hosts to scan, so ping ourselves inside the
+    # job's own sandbox: a copy of its unit file that only swaps ExecStart.
+    # A unit file, not systemd-run --property: EL8's systemd-run rejects some
+    # settings, such as LockPersonality, that its unit files accept.
+    - name: Read the ping check unit
+      ansible.builtin.slurp:
+        src: /etc/systemd/system/phpipam-ping-check.service
+      register: job_unit
+
+    - name: Copy the ping check unit with ping as its command
+      ansible.builtin.copy:
+        dest: /run/systemd/system/phpipam-sandbox-ping.service
+        content: >-
+          {{ job_unit.content | b64decode
+             | regex_replace('(?m)^ExecStart=.*$', 'ExecStart=/usr/bin/ping -c 1 -W 2 127.0.0.1') }}
+        mode: "0644"
+
+    # Rootless containers ignore ping's file capability, so this exercises the
+    # unit's ambient CAP_NET_RAW, which is what hosts without one rely on.
+    # A oneshot start waits for ping and fails when ping does.
+    - name: Ping as apache inside the job's sandbox
+      ansible.builtin.systemd_service:
+        name: phpipam-sandbox-ping.service
+        state: started
+        daemon_reload: true
+
+    - name: Remove the sandbox ping unit
+      ansible.builtin.file:
+        path: /run/systemd/system/phpipam-sandbox-ping.service
+        state: absent
+
     - name: Run a backup
       ansible.builtin.systemd_service:
         name: phpipam-backup.service
@@ -192,6 +330,22 @@
     - name: Find backups
       ansible.builtin.find:
         paths: /var/lib/phpipam/backup
-        patterns: "phpipam-*.sql.gz"
+        patterns: "phpipam-*.sql.gz.cms"
       register: backups
       failed_when: backups.matched == 0
+
+    - name: Check the backup belongs to the backup user
+      ansible.builtin.assert:
+        that: backups.files | map(attribute='pw_name') | unique | list == ['phpipam_backup']
+
+    - name: Decrypt the backup with the recipient's key
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail;
+          openssl cms -decrypt -inform DER -binary -inkey /root/backup-recipient.key
+          -in {{ (backups.files | map(attribute='path') | sort | last) | quote }}
+          | gunzip | grep -c 'CREATE TABLE `settings`'
+        executable: /bin/bash
+      register: restored
+      changed_when: false
+      failed_when: restored.stdout | int != 1

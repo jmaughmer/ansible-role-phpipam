@@ -34,6 +34,11 @@ php_admin_value[post_max_size] = {{ phpipam_php_post_max_size }}
 php_admin_flag[session.cookie_httponly] = on
 php_admin_flag[session.cookie_secure] = on
 php_admin_flag[session.use_strict_mode] = on
+php_admin_flag[session.use_only_cookies] = on
+php_admin_flag[allow_url_fopen] = {{ 'on' if phpipam_php_allow_url_fopen | bool else 'off' }}
+{% if phpipam_php_open_basedir | length > 0 %}
+php_admin_value[open_basedir] = {{ phpipam_php_open_basedir | join(':') }}
+{% endif %}
 php_value[session.save_handler] = files
 php_value[session.save_path] = /var/lib/php/session
 {% for key, value in phpipam_php_settings_extra.items() %}

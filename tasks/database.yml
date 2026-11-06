@@ -1,6 +1,8 @@
 ---
 # Everything here logs in as the phpIPAM user: over the socket for a local
-# database, or over TLS for a remote one.
+# database, or over TLS for a remote one. The exceptions log in as root over
+# the socket (unix_socket): the temporary grant for schema changes and the
+# backup account, both on a local database the MariaDB role manages.
 - name: Manage the phpIPAM database
   module_defaults:
     ansible.mysql.mysql_db: &phpipam_db_login
@@ -16,6 +18,16 @@
     ansible.mysql.mysql_query:
       <<: *phpipam_db_login
       login_db: "{{ phpipam_db_name }}"
+  vars:
+    # The day-to-day account lacks DDL rights only on a database the role manages.
+    __phpipam_db_elevate: >-
+      {{ __phpipam_db_local | bool and phpipam_manage_mariadb | bool
+         and phpipam_db_privileges | upper != 'ALL' }}
+    __phpipam_root_login: &phpipam_root_login
+      login_user: root
+      login_password: ""
+      login_unix_socket: "{{ phpipam_db_socket }}"
+      login_db: mysql
   block:
     - name: Look for the phpIPAM schema
       ansible.mysql.mysql_query:
@@ -24,40 +36,69 @@
       changed_when: false
       check_mode: false
 
-    - name: Import the phpIPAM schema
-      ansible.mysql.mysql_db:
-        name: "{{ phpipam_db_name }}"
-        state: import
-        target: "{{ __phpipam_release_dir }}/db/SCHEMA.sql"
-      when: __phpipam_schema.query_result[0] | length == 0
-      register: __phpipam_schema_import
-
     - name: Read the database version
       ansible.builtin.command:
         argv: [php, "{{ __phpipam_helper }}", "{{ __phpipam_release_dir }}", status]
       register: __phpipam_db_status
       changed_when: false
       check_mode: false
+      when: __phpipam_schema.query_result[0] | length > 0
 
-    - name: Back up the database before the upgrade
-      ansible.builtin.shell:
-        cmd: >-
-          set -o pipefail;
-          mysqldump --single-transaction --routines --triggers {{ phpipam_db_name | quote }}
-          | gzip > {{ (phpipam_backup_dir ~ '/pre-upgrade-' ~ (__phpipam_db_status.stdout | from_json).db ~ '.sql.gz') | quote }}
-        executable: /bin/bash
-      when:
-        - not (__phpipam_db_status.stdout | from_json).current
-        - phpipam_db_backup_before_upgrade | bool
-        - __phpipam_db_local | bool
-      changed_when: true
+    - name: Work out whether the schema changes
+      ansible.builtin.set_fact:
+        __phpipam_schema_missing: "{{ __phpipam_schema.query_result[0] | length == 0 }}"
+        __phpipam_schema_outdated: >-
+          {{ __phpipam_schema.query_result[0] | length > 0
+             and not (__phpipam_db_status.stdout | from_json).current }}
 
-    - name: Upgrade the database
-      ansible.builtin.command:
-        argv: [php, "{{ __phpipam_helper }}", "{{ __phpipam_release_dir }}", upgrade]
-      register: __phpipam_db_upgrade
-      when: not (__phpipam_db_status.stdout | from_json).current
-      changed_when: __phpipam_db_upgrade.stdout is search('^upgraded')
+    - name: Change the schema with full rights on the phpIPAM database
+      when: __phpipam_schema_missing | bool or __phpipam_schema_outdated | bool
+      block:
+        - name: Grant full rights for the schema change
+          ansible.mysql.mysql_query:
+            <<: *phpipam_root_login
+            query: "GRANT ALL PRIVILEGES ON `{{ phpipam_db_name }}`.* TO %s@'localhost'"
+            positional_args: ["{{ phpipam_db_user }}"]
+          when: __phpipam_db_elevate | bool
+
+        - name: Import the phpIPAM schema
+          ansible.mysql.mysql_db:
+            name: "{{ phpipam_db_name }}"
+            state: import
+            target: "{{ __phpipam_release_dir }}/db/SCHEMA.sql"
+          when: __phpipam_schema_missing | bool
+          register: __phpipam_schema_import
+
+        - name: Back up the database before the upgrade
+          ansible.builtin.shell:
+            cmd: >-
+              set -o pipefail;
+              mysqldump --single-transaction --triggers --no-tablespaces {{ phpipam_db_name | quote }}
+              | gzip {{ __phpipam_backup_encrypt_cmd }}
+              > {{ (phpipam_backup_dir ~ '/pre-upgrade-' ~ (__phpipam_db_status.stdout | from_json).db ~ __phpipam_backup_ext) | quote }}
+            executable: /bin/bash
+          when:
+            - __phpipam_schema_outdated | bool
+            - phpipam_db_backup_before_upgrade | bool
+            - __phpipam_db_local | bool
+          changed_when: true
+
+        - name: Upgrade the database
+          ansible.builtin.command:
+            argv: [php, "{{ __phpipam_helper }}", "{{ __phpipam_release_dir }}", upgrade]
+          register: __phpipam_db_upgrade
+          when: __phpipam_schema_outdated | bool
+          changed_when: __phpipam_db_upgrade.stdout is search('^upgraded')
+
+      always:
+        - name: Return the phpIPAM user to its day-to-day rights
+          ansible.mysql.mysql_query:
+            <<: *phpipam_root_login
+            query:
+              - "REVOKE ALL PRIVILEGES ON `{{ phpipam_db_name }}`.* FROM %s@'localhost'"
+              - "GRANT {{ phpipam_db_privileges }} ON `{{ phpipam_db_name }}`.* TO %s@'localhost'"
+            positional_args: ["{{ phpipam_db_user }}"]
+          when: __phpipam_db_elevate | bool
 
     - name: Set the Admin password
       ansible.builtin.command:
@@ -104,3 +145,35 @@
       register: __phpipam_api_result
       changed_when: __phpipam_api_result.rowcount | sum > 0
       no_log: true
+
+# The backup user logs in over the socket as itself (unix_socket), with
+# read-only rights: no password to store, and nothing it can change.
+- name: Set up the backup database account
+  when: phpipam_backup_enabled | bool and __phpipam_db_local | bool
+  module_defaults:
+    ansible.mysql.mysql_query:
+      login_user: root
+      login_password: ""
+      login_unix_socket: "{{ phpipam_db_socket }}"
+      login_db: mysql
+  block:
+    - name: Look for the backup account
+      ansible.mysql.mysql_query:
+        query: SELECT COUNT(*) AS n FROM mysql.user WHERE User = %s AND Host = 'localhost'
+        positional_args: ["{{ phpipam_backup_user }}"]
+      register: __phpipam_backup_account
+      changed_when: false
+      check_mode: false
+
+    - name: Create the backup account
+      ansible.mysql.mysql_query:
+        query: CREATE USER %s@'localhost' IDENTIFIED VIA unix_socket
+        positional_args: ["{{ phpipam_backup_user }}"]
+      when: __phpipam_backup_account.query_result[0][0].n | int == 0
+
+    # GRANT changes nothing when the rights are already there.
+    - name: Grant the backup account read-only rights
+      ansible.mysql.mysql_query:
+        query: "GRANT SELECT, LOCK TABLES, SHOW VIEW, TRIGGER, EVENT ON `{{ phpipam_db_name }}`.* TO %s@'localhost'"
+        positional_args: ["{{ phpipam_backup_user }}"]
+      changed_when: false

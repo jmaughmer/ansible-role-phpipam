@@ -8,14 +8,22 @@
 # upgrade the database, then switch the symlink.
 phpipam_version: "1.8.3"
 phpipam_archive_url: "https://github.com/phpipam/phpipam/releases/download/v{{ phpipam_version }}/phpipam-v{{ phpipam_version }}.tgz"
-# Optional checksum for the download, e.g. "sha256:0123...".
-phpipam_archive_checksum: ""
-# For air-gapped hosts: a tarball on the controller, copied instead of downloaded.
+# Checksum the tarball must match, e.g. "sha256:0123...". Known releases have
+# theirs in vars/main.yml (from the GitHub release assets); other versions
+# need it set here. The role refuses an unverified download.
+phpipam_archive_checksum: "{{ __phpipam_archive_checksums[phpipam_version] | default('') }}"
+# Install a version with no known checksum anyway (not recommended).
+phpipam_archive_allow_unverified: false
+# For air-gapped hosts: a tarball on the controller, copied instead of
+# downloaded. It is checked against phpipam_archive_checksum too.
 phpipam_archive_src: ""
 phpipam_releases_dir: /var/www/phpipam-releases
 phpipam_web_root: /var/www/phpipam
 phpipam_config_dir: /etc/phpipam
 phpipam_state_dir: /var/lib/phpipam
+# Logos uploaded in the UI. Kept outside the releases and linked into each
+# one, so they survive upgrades.
+phpipam_logo_dir: "{{ phpipam_state_dir }}/logo"
 # Releases kept in phpipam_releases_dir, including the current one.
 phpipam_keep_releases: 2
 # User and group PHP-FPM and the scheduled jobs run as.
@@ -48,6 +56,11 @@ phpipam_db_user: phpipam
 # Required. The MariaDB role enforces simple_password_check: 15+ characters
 # with upper case, lower case, a digit and a special character.
 phpipam_db_password: ""
+# Privileges the phpIPAM user holds day to day, on a local database the role
+# manages. ALTER and INDEX cover custom fields, which phpIPAM adds as table
+# columns. Schema imports and upgrades get ALL for the length of the change
+# only. Set "ALL" to also allow the UI's "fix database" repairs.
+phpipam_db_privileges: SELECT,INSERT,UPDATE,DELETE,CREATE TEMPORARY TABLES,LOCK TABLES,ALTER,INDEX
 phpipam_db_tls: "{{ phpipam_db_host != 'localhost' }}"
 # CA that signed the database server certificate, on the phpIPAM host.
 phpipam_db_tls_ca: /etc/pki/mariadb/ca.crt
@@ -175,19 +188,33 @@ phpipam_kea_hosts_db_enabled: false
 phpipam_kea_hosts_db_name: kea
 phpipam_kea_hosts_db_user: kea
 phpipam_kea_hosts_db_password: ""
-# Hosts the Kea servers connect from. Remote users get REQUIRE SSL from the
-# MariaDB role, so set trust-anchor in kea_hosts_database on the Kea side.
-phpipam_kea_hosts_db_client_hosts: ["%"]
+# Required with phpipam_kea_hosts_db_enabled: the Kea servers' addresses (or
+# a pattern such as "10.0.0.%"), one account per entry. Remote users get
+# REQUIRE SSL from the MariaDB role, so set trust-anchor in kea_hosts_database
+# on the Kea side.
+phpipam_kea_hosts_db_client_hosts: []
+# TLS requirement for those accounts: "" keeps the MariaDB role's default
+# (SSL), "X509" also demands a client certificate signed by its CA.
+phpipam_kea_hosts_db_tls_requires: ""
 
 # 3. phpIPAM's built-in DHCP module (Administration > DHCP), Kea flavour. It
 #    reads subnets from a Kea configuration file and leases/reservations from
 #    the Kea databases. The role writes that file from the running Kea
-#    configuration (config-get through the Control Agent) or from
+#    configuration (config-get through the Kea API) or from
 #    phpipam_kea_config.
 phpipam_kea_dhcp_module_enabled: false
 phpipam_kea_config_file: "{{ phpipam_config_dir }}/kea.conf"
 phpipam_kea_config_source: api           # api or static
+# Kea 2.7.2+ (ISC 3.x packages) serves the API from each daemon. List one URL
+# per service; the Kea role uses ports 8004 (dhcp4) and 8006 (dhcp6).
+#   phpipam_kea_api_urls:
+#     dhcp4: http://kea.example.com:8004/
+#     dhcp6: http://kea.example.com:8006/
+phpipam_kea_api_urls: {}
+# Older Kea, or kea_api_mode: ctrl_agent: one kea-ctrl-agent URL for every
+# service. Used when phpipam_kea_api_urls is empty.
 phpipam_kea_ctrl_agent_url: http://kea.example.com:8000/
+# Credentials and TLS checks, for either kind of URL.
 phpipam_kea_ctrl_agent_user: ""
 phpipam_kea_ctrl_agent_password: ""
 phpipam_kea_ctrl_agent_validate_certs: true
@@ -221,6 +248,14 @@ phpipam_backup_enabled: true
 phpipam_backup_dir: "{{ phpipam_state_dir }}/backup"
 phpipam_backup_on_calendar: "*-*-* 02:30:00"
 phpipam_backup_keep_days: 14
+# Backups run as this OS user, which logs in to MariaDB over the socket
+# (unix_socket) with read-only rights on the phpIPAM database.
+phpipam_backup_user: phpipam_backup
+# Dumps hold password hashes and API app codes in clear. Give an X.509
+# certificate (PEM) to encrypt every backup to it (CMS, AES-256, RSA-OAEP);
+# keep the private key off this host. Restore with:
+#   openssl cms -decrypt -inform DER -binary -inkey key.pem -in FILE | gunzip
+phpipam_backup_encrypt_cert: ""
 
 # =============================================================================
 # Performance tuning
@@ -265,9 +300,18 @@ phpipam_php_upload_max_filesize: 32M
 phpipam_php_post_max_size: 32M
 phpipam_php_opcache_memory: 128
 phpipam_php_opcache_max_files: 10000
+# Releases never change in place, and the role restarts PHP-FPM whenever it
+# switches release or rewrites config.php, so opcache need not stat files.
+phpipam_php_opcache_validate_timestamps: false
 phpipam_php_opcache_revalidate_freq: 60
 phpipam_php_realpath_cache_size: 4096K
 phpipam_php_settings_extra: {}
+
+# Cache-Control max-age for static files (CSS, JavaScript, images, fonts).
+# phpIPAM adds its version to CSS and JS URLs, so upgrades still reach browsers.
+phpipam_static_cache_max_age: 86400
+# Serve HTTP/2 (installs mod_http2). Needs the event or worker MPM.
+phpipam_http2: true
 
 # MariaDB settings for phpIPAM, written to /etc/my.cnf.d/zz-phpipam.cnf when
 # the database is local. Merged over the defaults below.
@@ -287,6 +331,23 @@ phpipam_mariadb_tuning: {}
 phpipam_selinux_manage: true
 # Extra SELinux booleans, merged over the ones the role sets.
 phpipam_selinux_booleans: {}
+# Directories the PHP-FPM pool may open files in. Empty turns open_basedir off.
+phpipam_php_open_basedir:
+  - "{{ phpipam_releases_dir }}"
+  - "{{ phpipam_web_root }}"
+  - "{{ phpipam_config_dir }}"
+  - "{{ phpipam_logo_dir }}"
+  - /var/lib/php/session
+  - /tmp
+  - /usr/share/pear
+  - /usr/share/php
+  # Binaries phpIPAM checks for before running scans and backups.
+  - /usr/bin/php
+  - /usr/bin/ping
+  - /usr/sbin/fping
+  - /usr/bin/mysqldump
+# URL fopen wrappers; phpIPAM only needs them for its update check.
+phpipam_php_allow_url_fopen: false
 # fapolicyd denies interpreters reading untrusted scripts, which includes PHP.
 # The role trusts the phpIPAM tree, config.php and its helper by hash.
 phpipam_fapolicyd_manage: true

@@ -18,6 +18,16 @@
       phpipam_admin_password (8+ characters).
     quiet: true
 
+- name: Check the release can be verified
+  ansible.builtin.assert:
+    that: >-
+      phpipam_archive_checksum | length > 0 or phpipam_archive_allow_unverified | bool
+    fail_msg: >-
+      No checksum is known for phpIPAM {{ phpipam_version }}. Set phpipam_archive_checksum
+      ("sha256:..." from the release's SHA256.txt or the asset digest on GitHub), or
+      phpipam_archive_allow_unverified: true to install it unchecked.
+    quiet: true
+
 - name: Check database settings
   ansible.builtin.assert:
     that:
@@ -77,11 +87,13 @@
   ansible.builtin.assert:
     that:
       - not (phpipam_kea_hosts_db_enabled | bool) or phpipam_kea_hosts_db_password | length >= 15
+      - not (phpipam_kea_hosts_db_enabled | bool) or phpipam_kea_hosts_db_client_hosts | length > 0
       - phpipam_kea_config_source in ['api', 'static']
       - >-
         not (phpipam_kea_dhcp_module_enabled | bool) or phpipam_kea_config_source != 'static'
         or 'Dhcp4' in phpipam_kea_config or 'Dhcp6' in phpipam_kea_config
     fail_msg: >-
-      phpipam_kea_hosts_db_password needs 15+ characters; phpipam_kea_config_source is api or
-      static, and static needs phpipam_kea_config with a Dhcp4 or Dhcp6 key.
+      phpipam_kea_hosts_db_password needs 15+ characters and phpipam_kea_hosts_db_client_hosts
+      the Kea servers' addresses; phpipam_kea_config_source is api or static, and static
+      needs phpipam_kea_config with a Dhcp4 or Dhcp6 key.
     quiet: true

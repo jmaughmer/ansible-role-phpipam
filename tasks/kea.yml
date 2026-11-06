@@ -1,9 +1,12 @@
 ---
 # phpIPAM's Kea adapter reads subnet4/subnet6 from a local Kea-style file and
 # connects to the lease and hosts databases named in it.
-- name: Fetch the running configuration from the Kea Control Agent
+# Kea 2.7.2+ serves the API from each daemon (one URL per service, from
+# phpipam_kea_api_urls); older Kea goes through kea-ctrl-agent, which takes
+# every service in one request.
+- name: Fetch the running configuration from Kea
   ansible.builtin.uri:
-    url: "{{ phpipam_kea_ctrl_agent_url }}"
+    url: "{{ phpipam_kea_api_urls[item] if __phpipam_kea_per_service else phpipam_kea_ctrl_agent_url }}"
     method: POST
     url_username: "{{ phpipam_kea_ctrl_agent_user | default(omit, true) }}"
     url_password: "{{ phpipam_kea_ctrl_agent_password | default(omit, true) }}"
@@ -13,19 +16,24 @@
     body_format: json
     body:
       command: config-get
-      service: "{{ phpipam_kea_services }}"
+      service: "{{ [item] if __phpipam_kea_per_service else phpipam_kea_services }}"
   register: __phpipam_kea_config_get
+  loop: "{{ phpipam_kea_services if __phpipam_kea_per_service else ['all'] }}"
+  vars:
+    __phpipam_kea_per_service: "{{ phpipam_kea_api_urls | length > 0 }}"
   when: phpipam_kea_config_source == 'api'
   check_mode: false
   no_log: true
 
 - name: Check the Kea answers
   ansible.builtin.assert:
-    that: __phpipam_kea_config_get.json | map(attribute='result') | reject('equalto', 0) | list | length == 0
+    that: __phpipam_kea_answers | map(attribute='result') | reject('equalto', 0) | list | length == 0
     fail_msg: >-
-      config-get failed: {{ __phpipam_kea_config_get.json | map(attribute='text', default='') | join('; ') }}
+      config-get failed: {{ __phpipam_kea_answers | map(attribute='text', default='') | join('; ') }}
     quiet: true
   when: phpipam_kea_config_source == 'api'
+  vars:
+    __phpipam_kea_answers: "{{ __phpipam_kea_config_get.results | map(attribute='json') | flatten }}"
 
 - name: Write the Kea configuration for phpIPAM
   ansible.builtin.template:
@@ -36,6 +44,6 @@
     mode: "0640"
   vars:
     __phpipam_kea_source: >-
-      {{ (__phpipam_kea_config_get.json | map(attribute='arguments') | list | combine)
+      {{ (__phpipam_kea_config_get.results | map(attribute='json') | flatten | map(attribute='arguments') | list | combine)
          if phpipam_kea_config_source == 'api' else phpipam_kea_config }}
   no_log: true

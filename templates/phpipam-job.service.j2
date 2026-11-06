@@ -11,7 +11,31 @@ Group={{ phpipam_group }}
 ExecStart=/usr/bin/php {{ phpipam_web_root }}/functions/scripts/{{ __phpipam_job.script }}{{ (' ' ~ __phpipam_job.args) if __phpipam_job.args is defined else '' }}
 Nice=10
 IOSchedulingClass=idle
-PrivateTmp=true
-ProtectSystem=full
-ProtectHome=true
 TimeoutStartSec={{ __phpipam_job.timeout | default('1h') }}
+
+# Sandboxing. The jobs only read the phpIPAM tree and talk to the database
+# and the network. ping and fping need CAP_NET_RAW: the ambient capability
+# hands it to them where they carry no file capability, and NoNewPrivileges
+# stays off so the file capability still works where they do.
+CapabilityBoundingSet=CAP_NET_RAW
+AmbientCapabilities=CAP_NET_RAW
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+{# EL8's systemd 239 predates these two and would warn on every load. #}
+{% if ansible_facts['systemd']['version'] | default(0) | int >= 245 %}
+ProtectClock=true
+{% endif %}
+{% if ansible_facts['systemd']['version'] | default(0) | int >= 242 %}
+ProtectHostname=true
+{% endif %}
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service

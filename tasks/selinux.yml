@@ -24,6 +24,12 @@
   loop: "{{ __phpipam_writable_dirs }}"
   register: __phpipam_fcontext_rw
 
+- name: Label the logo directory writable for PHP
+  community.general.sefcontext:
+    target: "{{ phpipam_logo_dir }}(/.*)?"
+    setype: httpd_sys_rw_content_t
+    state: present
+
 - name: Restore file contexts on the phpIPAM files
   ansible.builtin.command: "restorecon -R -v {{ phpipam_releases_dir }} {{ phpipam_config_dir }} {{ phpipam_state_dir }}"
   register: __phpipam_restorecon

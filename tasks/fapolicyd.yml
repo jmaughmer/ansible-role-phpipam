@@ -2,7 +2,10 @@
 # fapolicyd's default rules only let interpreters read scripts it trusts, and
 # PHP files count (text/x-php). The phpIPAM tarball is not an RPM, so its files
 # go into a trust.d file with path, size and SHA-256. The list is rebuilt on
-# every run, so upgrades and config changes stay trusted.
+# every run, so upgrades and config changes stay trusted. The upload folders
+# PHP can write to are left out, so nothing that lands there (by a bug or an
+# attack) becomes trusted on the next run; the logo folder is a link outside
+# the release, which the walk does not follow.
 - name: Check for fapolicyd
   ansible.builtin.stat:
     path: /usr/sbin/fapolicyd
@@ -14,9 +17,12 @@
     - name: Hash the files to trust
       ansible.builtin.command:
         argv: "{{ [ansible_facts['python']['executable'], '-c', __phpipam_hash_script] + __phpipam_fapolicyd_paths }}"
+      environment:
+        PHPIPAM_TRUST_EXCLUDE: "{{ __phpipam_fapolicyd_exclude | join('\n') }}"
       vars:
         __phpipam_hash_script: |
           import hashlib, os, sys
+          exclude = [e for e in os.environ.get("PHPIPAM_TRUST_EXCLUDE", "").split("\n") if e]
           files = []
           for top in sys.argv[1:]:
               if os.path.isfile(top):
@@ -25,6 +31,8 @@
                   files.extend(os.path.join(d, n) for n in names)
           for p in sorted(set(files)):
               if os.path.islink(p) or not os.path.isfile(p) or any(c.isspace() for c in p):
+                  continue
+              if any(e in p for e in exclude):
                   continue
               h = hashlib.sha256()
               with open(p, "rb") as f:

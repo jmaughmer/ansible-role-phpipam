@@ -30,9 +30,17 @@
 {% if __phpipam_tls.chain | length > 0 %}
     SSLCertificateChainFile {{ __phpipam_tls.chain }}
 {% endif %}
+{% if phpipam_http2 | bool %}
+    Protocols h2 http/1.1
+{% endif %}
 
     # Other security headers come from the Apache role's global hardening.
     Header always set Strict-Transport-Security "max-age={{ phpipam_hsts_max_age }}"
+
+    # Static files: let browsers keep them. phpIPAM versions its CSS and JS URLs.
+    <FilesMatch "\.(css|js|png|jpe?g|gif|svg|ico|woff2?|ttf|eot)$">
+        Header set Cache-Control "public, max-age={{ phpipam_static_cache_max_age }}"
+    </FilesMatch>
 
     # Long scans, imports and API calls.
     ProxyTimeout {{ phpipam_fpm_request_terminate_timeout }}
@@ -81,8 +89,11 @@
         SetHandler none
     </DirectoryMatch>
 
-    # Uploaded logos: PNG only.
-    <Directory "{{ root }}/css/images/logo">
+    # Uploaded logos: PNG only. css/images/logo links to phpipam_logo_dir, so
+    # the same rules cover both paths.
+{% for logo in [root ~ '/css/images/logo', phpipam_logo_dir] %}
+    <Directory "{{ logo }}">
+        Options None
         SetHandler none
         <FilesMatch ".">
             Require all denied
@@ -91,6 +102,7 @@
             Require all granted
         </FilesMatch>
     </Directory>
+{% endfor %}
 
     <Files "config.php">
         Require all denied
