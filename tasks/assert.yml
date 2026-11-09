@@ -42,18 +42,42 @@
       database and user with the MariaDB role on the database server.
     quiet: true
 
-- name: Check TLS settings
+- name: Check the certificate source
   ansible.builtin.assert:
-    that:
-      - phpipam_tls_source in ['selfsigned', 'provided', 'apache']
-      - >-
-        phpipam_tls_source != 'provided' or
-        ((phpipam_tls_cert | length > 0 or phpipam_tls_cert_src | length > 0) and
-         (phpipam_tls_key | length > 0 or phpipam_tls_key_src | length > 0))
-    fail_msg: >-
-      phpipam_tls_source must be selfsigned, provided or apache. "provided" needs
-      phpipam_tls_cert/phpipam_tls_key (PEM content) or phpipam_tls_cert_src/phpipam_tls_key_src.
+    that: phpipam_tls_source in ['selfsigned', 'provided', 'apache']
+    fail_msg: phpipam_tls_source must be selfsigned, provided or apache.
     quiet: true
+
+# These run on the list as a whole, with filters, so that no result holds a key.
+- name: Check the supplied certificates
+  when: phpipam_tls_source == 'provided'
+  block:
+    - name: Check the supplied certificates are listed
+      ansible.builtin.assert:
+        that: ssl_certificates | length > 0
+        fail_msg: >-
+          phpipam_tls_source "provided" needs at least one entry in ssl_certificates, each with
+          name, certificate.content and key.content. ssl_certificates replaces phpipam_tls_cert,
+          phpipam_tls_key, phpipam_tls_chain and their _src forms.
+        quiet: true
+
+    - name: Check the supplied certificate entries
+      ansible.builtin.assert:
+        that:
+          - ssl_certificates | selectattr('certificate.content', 'undefined') | list | length == 0
+          - ssl_certificates | selectattr('key.content', 'undefined') | list | length == 0
+          - __phpipam_ssl_certificate_names | reject('match', __phpipam_ssl_certificate_name_pattern) | list | length == 0
+          - __phpipam_ssl_certificate_names | unique | length == __phpipam_ssl_certificate_names | length
+        fail_msg: >-
+          Every entry in ssl_certificates needs certificate.content, key.content and a unique name
+          that is safe as a file name (letters, digits, and . _ - *; no slashes, spaces or "..").
+        quiet: true
+
+    - name: Check the chosen certificate is listed
+      ansible.builtin.assert:
+        that: __phpipam_tls_certificate in __phpipam_ssl_certificate_names
+        fail_msg: phpipam_tls_certificate must be the name of an entry in ssl_certificates.
+        quiet: true
 
 - name: Check the base path
   ansible.builtin.assert:

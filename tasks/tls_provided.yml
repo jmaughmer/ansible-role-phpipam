@@ -1,0 +1,68 @@
+---
+# The certificate and key come from the ssl_certificates list the Apache, MariaDB
+# and Kea roles also read. Only the entry in use is written here.
+
+# The pair is checked before any file is written, so a bad one can't take a
+# running httpd down at its next reload.
+- name: Read the supplied certificate
+  community.crypto.x509_certificate_info:
+    content: "{{ __phpipam_tls_entry.certificate.content }}"
+  register: __phpipam_ssl_cert_info
+  failed_when: false
+
+- name: Read the supplied private key
+  community.crypto.openssl_privatekey_info:
+    content: "{{ __phpipam_tls_entry.key.content }}"
+  register: __phpipam_ssl_key_info
+  failed_when: false
+  no_log: true
+
+- name: Check the key belongs to the certificate
+  ansible.builtin.assert:
+    that:
+      - __phpipam_ssl_cert_info.public_key is defined
+      - __phpipam_ssl_key_info.public_key is defined
+      - __phpipam_ssl_cert_info.public_key == __phpipam_ssl_key_info.public_key
+      - not __phpipam_ssl_cert_info.expired
+    fail_msg: >-
+      ssl_certificates entry {{ __phpipam_tls_certificate }}:
+      {{ 'the certificate is not valid PEM' if __phpipam_ssl_cert_info.public_key is not defined
+         else 'the key is not valid PEM or has a passphrase, which httpd cannot prompt for' if __phpipam_ssl_key_info.public_key is not defined
+         else 'the key does not match the certificate' if __phpipam_ssl_cert_info.public_key != __phpipam_ssl_key_info.public_key
+         else 'the certificate has expired' }}.
+    quiet: true
+
+- name: Install the certificate
+  ansible.builtin.copy:
+    dest: "{{ __phpipam_tls_dir }}/{{ __phpipam_tls_certificate }}.crt"
+    content: "{{ __phpipam_tls_entry.certificate.content }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload phpIPAM httpd
+
+- name: Install the private key
+  ansible.builtin.copy:
+    dest: "{{ __phpipam_tls_dir }}/{{ __phpipam_tls_certificate }}.key"
+    content: "{{ __phpipam_tls_entry.key.content }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  diff: false
+  notify: Reload phpIPAM httpd
+
+# The virtual host keeps the same paths whichever certificate source is used.
+- name: Link the certificate paths
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    src: "{{ item.src }}"
+    state: link
+    force: true
+  loop:
+    - { path: "{{ phpipam_tls_cert_path }}", src: "{{ __phpipam_tls_dir }}/{{ __phpipam_tls_certificate }}.crt" }
+    - { path: "{{ phpipam_tls_key_path }}", src: "{{ __phpipam_tls_dir }}/{{ __phpipam_tls_certificate }}.key" }
+  loop_control:
+    label: "{{ item.path }}"
+  when: item.path != item.src
+  notify: Reload phpIPAM httpd

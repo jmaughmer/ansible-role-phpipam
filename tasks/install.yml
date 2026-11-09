@@ -7,7 +7,7 @@
     # mariadb is the client, used for the schema import and backups.
     __phpipam_tool_packages: >-
       {{ ['tar', 'gzip', 'iputils', 'mariadb', 'python3-PyMySQL']
-         + (['python3-cryptography'] if phpipam_tls_source == 'selfsigned' else [])
+         + (['python3-cryptography'] if phpipam_tls_source in ['selfsigned', 'provided'] else [])
          + (['openssl'] if phpipam_backup_encrypt_cert | length > 0 else [])
          + (['mod_http2'] if phpipam_http2 | bool else []) }}
   notify:

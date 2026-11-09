@@ -27,9 +27,6 @@
     SSLEngine on
     SSLCertificateFile {{ __phpipam_tls.cert }}
     SSLCertificateKeyFile {{ __phpipam_tls.key }}
-{% if __phpipam_tls.chain | length > 0 %}
-    SSLCertificateChainFile {{ __phpipam_tls.chain }}
-{% endif %}
 {% if phpipam_http2 | bool %}
     Protocols h2 http/1.1
 {% endif %}

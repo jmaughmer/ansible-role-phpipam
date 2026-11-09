@@ -78,15 +78,27 @@ The role also sets `httpd_can_network_connect_db` in that case.
 | `phpipam_tls_source` | |
 |---|---|
 | `selfsigned` (default) | Key and certificate in `/etc/pki/phpipam/`, SANs from `phpipam_server_name`, `phpipam_server_aliases` and the host's IPv4 address. Renewed `phpipam_tls_selfsigned_renew_days` before expiry. |
-| `provided` | `phpipam_tls_cert` / `phpipam_tls_key` / `phpipam_tls_chain` (PEM content, e.g. from a vault) or `phpipam_tls_cert_src` / `phpipam_tls_key_src` / `phpipam_tls_chain_src` (controller files). The role checks the key matches and the certificate is not expired. |
+| `provided` | An entry from `ssl_certificates`, the list the Apache, MariaDB and Kea roles also read. The role checks the key matches and the certificate is not expired. |
 | `apache` | Use the Apache role's certificate (`apache_tls_cert_path`, `apache_tls_key_path`). |
 
 ```yaml
 phpipam_tls_source: provided
-phpipam_tls_cert: "{{ vault_ipam_cert }}"
-phpipam_tls_key: "{{ vault_ipam_key }}"
-phpipam_tls_chain: "{{ lookup('file', 'files/corp-ca-chain.pem') }}"
+ssl_certificates:
+  - name: ipam.example.com
+    certificate:
+      content: |
+        -----BEGIN CERTIFICATE-----
+        ...
+        -----END CERTIFICATE-----
+    key:
+      content: !vault |
+        $ANSIBLE_VAULT;1.1;AES256
+        ...
 ```
+
+The role uses `phpipam_tls_certificate` if you set it, then the entry named `phpipam_server_name`, then the first entry. It writes only that entry, as `/etc/pki/phpipam/<name>.crt` (0644) and `<name>.key` (0600), with `phpipam.crt` and `phpipam.key` linking to them. Put any intermediate certificates in `certificate.content`, after the server certificate.
+
+Encrypt each key with Ansible Vault (`ansible-vault encrypt_string --stdin-name content < server.key`). Before writing anything, the role checks that the certificate and key are valid PEM, the key has no passphrase, the key belongs to the certificate, and the certificate hasn't expired. If a check fails, the run stops with the existing files and the running httpd untouched. Keys stay out of the output, including with `-vvv` and `--diff`.
 
 Protocols and ciphers come from the Apache role (`SSLCipherSuite PROFILE=SYSTEM`), so they follow the system crypto policy. HTTP on port 80 redirects to HTTPS for the phpIPAM name. The phpIPAM vhost is `/etc/httpd/conf.d/zz-phpipam.conf`, loaded after the Apache role's default vhost.
 
@@ -275,6 +287,7 @@ See `defaults/main.yml` for everything, with comments.
 | `phpipam_admin_password` | required |
 | `phpipam_manage_mariadb` / `phpipam_manage_apache` | `true` |
 | `phpipam_tls_source` | `selfsigned` |
+| `ssl_certificates` / `phpipam_tls_certificate` | `[]` / `""` |
 | `phpipam_kea_api_app_enabled` | `false` |
 | `phpipam_kea_hosts_db_enabled` | `false` |
 | `phpipam_kea_dhcp_module_enabled` | `false` |

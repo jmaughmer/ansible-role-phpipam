@@ -22,16 +22,25 @@ __phpipam_tls_files:
   selfsigned:
     cert: "{{ phpipam_tls_cert_path }}"
     key: "{{ phpipam_tls_key_path }}"
-    chain: ""
   provided:
     cert: "{{ phpipam_tls_cert_path }}"
     key: "{{ phpipam_tls_key_path }}"
-    chain: "{{ phpipam_tls_chain_path if (phpipam_tls_chain | length > 0 or phpipam_tls_chain_src | length > 0) else '' }}"
   apache:
     cert: "{{ apache_tls_cert_path | default('/etc/pki/httpd/server.crt') }}"
     key: "{{ apache_tls_key_path | default('/etc/pki/httpd/server.key') }}"
-    chain: ""
 __phpipam_tls: "{{ __phpipam_tls_files[phpipam_tls_source] }}"
+
+# Supplied certificates. Only the names are read here, so these can't carry a
+# private key.
+__phpipam_ssl_certificate_names: "{{ ssl_certificates | map(attribute='name', default='') | list }}"
+# The name becomes a file name.
+__phpipam_ssl_certificate_name_pattern: '^(?!.*\.\.)[A-Za-z0-9_*][A-Za-z0-9._*-]*$'
+__phpipam_tls_certificate: >-
+  {{ phpipam_tls_certificate if phpipam_tls_certificate | length > 0
+     else (phpipam_server_name if phpipam_server_name in __phpipam_ssl_certificate_names
+           else __phpipam_ssl_certificate_names | first | default('')) }}
+__phpipam_tls_entry: "{{ ssl_certificates | selectattr('name', 'eq', __phpipam_tls_certificate) | first }}"
+__phpipam_tls_dir: "{{ phpipam_tls_cert_path | dirname }}"
 
 __phpipam_kea_api_app:
   app_id: "{{ phpipam_kea_api_app_id }}"

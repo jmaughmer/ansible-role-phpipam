@@ -4,6 +4,7 @@
 
 ### Upgrade notes (action needed)
 
+- **Supplied certificates come from `ssl_certificates`,** the list the Apache, MariaDB and Kea roles also read. It replaces `phpipam_tls_cert`, `phpipam_tls_key`, `phpipam_tls_chain`, their `_src` forms and `phpipam_tls_chain_path`. Put the chain in `certificate.content`, after the server certificate. A run with `phpipam_tls_source: provided` and no entries fails and says so.
 - **`phpipam_kea_hosts_db_client_hosts` has no default.** It used to be `["%"]`, any host. With `phpipam_kea_hosts_db_enabled`, list the Kea servers' addresses.
 - **Release tarballs are verified.** Known releases (1.8.2, 1.8.3) have a pinned SHA-256. For any other `phpipam_version`, set `phpipam_archive_checksum`, or the role stops before downloading. `phpipam_archive_src` tarballs are checked as well.
 - **The phpIPAM database user has day-to-day rights only** (`phpipam_db_privileges`), on a local database the role manages. Schema imports and upgrades get `ALL` while they run. Set `phpipam_db_privileges: ALL` if you use the UI's "fix database" repair.

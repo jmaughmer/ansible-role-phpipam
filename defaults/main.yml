@@ -95,20 +95,30 @@ phpipam_vhost_extra: ""
 # TLS certificate
 # =============================================================================
 # selfsigned: generate a key and self-signed certificate on the host.
-# provided:   install a certificate you supply (PEM content or controller files).
+# provided:   use a certificate from ssl_certificates.
 # apache:     reuse the certificate the Apache role manages (apache_tls_*).
 phpipam_tls_source: selfsigned
+# What the virtual host uses with selfsigned and provided. With provided these are
+# links to the real files.
 phpipam_tls_cert_path: /etc/pki/phpipam/phpipam.crt
 phpipam_tls_key_path: /etc/pki/phpipam/phpipam.key
-phpipam_tls_chain_path: /etc/pki/phpipam/phpipam-chain.crt
-# provided: give the PEM content (from a vault) ...
-phpipam_tls_cert: ""
-phpipam_tls_key: ""
-phpipam_tls_chain: ""
-# ... or files on the controller.
-phpipam_tls_cert_src: ""
-phpipam_tls_key_src: ""
-phpipam_tls_chain_src: ""
+# provided: the same list the Apache, MariaDB and Kea roles read. The entry in use
+# is written to <name>.crt and <name>.key (0600) next to phpipam_tls_cert_path. Put
+# any intermediate certificates in certificate.content, after the server
+# certificate. Keep the keys in Ansible Vault, without a passphrase.
+# - name: ipam.example.com
+#   certificate:
+#     content: |
+#       -----BEGIN CERTIFICATE-----
+#       ...
+#       -----END CERTIFICATE-----
+#   key:
+#     content: !vault |
+#       $ANSIBLE_VAULT;1.1;AES256
+#       ...
+ssl_certificates: []
+# Entry to use. Empty: the entry named phpipam_server_name, else the first.
+phpipam_tls_certificate: ""
 # selfsigned: FIPS-approved defaults (RSA 3072, SHA-256).
 phpipam_tls_selfsigned_key_type: RSA
 phpipam_tls_selfsigned_key_size: 3072
