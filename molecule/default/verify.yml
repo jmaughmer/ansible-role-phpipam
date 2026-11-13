@@ -333,12 +333,17 @@
         dest: /run/systemd/system/phpipam-sandbox-ping.service
         content: >-
           {{ job_unit.content | b64decode
-             | regex_replace('(?m)^ExecStart=.*$', 'ExecStart=/usr/bin/ping -c 1 -W 2 127.0.0.1') }}
+             | regex_replace('(?m)^ExecStart=.*$',
+               "ExecStart=/usr/bin/php -r 'passthru(\"/usr/bin/ping -c 1 -W 2 127.0.0.1\", $rc); exit($rc);'") }}
         mode: "0644"
 
     # Rootless containers ignore ping's file capability, so this exercises the
     # unit's ambient CAP_NET_RAW, which is what hosts without one rely on.
-    # A oneshot start waits for ping and fails when ping does.
+    # A oneshot start waits for ping and fails when ping does. The ping runs
+    # through PHP (as production does) rather than as ExecStart directly:
+    # RHEL 9's SELinux policy forbids systemd from exec'ing ping under
+    # User= (init_t -> ping_t is a denied bounded transition), independent of
+    # any capability, while the php entry point the real unit uses is allowed.
     - name: Ping as apache inside the job's sandbox
       ansible.builtin.systemd_service:
         name: phpipam-sandbox-ping.service
