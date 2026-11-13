@@ -12,7 +12,7 @@ roles:
   - name: jmaughmer.apache
     src: https://github.com/jmaughmer/ansible-role-apache.git
     scm: git
-    version: d16c77e33344cb534b7ffb29078fcd72adee17e8
+    version: 2f49774ac114e047fdca371c630974f4988980c2
 collections:
   - name: ansible.posix
     version: ">=1.5.0"

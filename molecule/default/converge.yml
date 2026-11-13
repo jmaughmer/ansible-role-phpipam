@@ -7,6 +7,9 @@
     phpipam_admin_password: "Molecule-Admin-2026!"
     phpipam_server_name: phpipam.example.test
     phpipam_server_aliases: [ipam.example.test]
+    # By default both roles use the host's FQDN. The Apache role's default vhost
+    # must not hide phpIPAM's when the names match.
+    apache_server_name: phpipam.example.test
     phpipam_tls_source: selfsigned
     phpipam_settings:
       enableVRF: 1

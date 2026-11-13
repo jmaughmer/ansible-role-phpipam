@@ -119,6 +119,34 @@
       register: api_login
       failed_when: not api_login.json.success or api_login.json.data.token | length == 0
 
+    # The API sets no session cookie, so it can't catch this: the Apache role's
+    # cookie flag rules used to crash the worker on this request.
+    - name: Log in through the web interface
+      ansible.builtin.uri:
+        url: "{{ base_url }}/app/login/login_check.php"
+        method: POST
+        validate_certs: false
+        headers:
+          Cookie: "{{ login.cookies_string }}"
+          X-Requested-With: XMLHttpRequest
+        body_format: form-urlencoded
+        body:
+          ipamusername: Admin
+          ipampassword: "{{ admin_password }}"
+        return_content: true
+      register: ui_login
+      failed_when: ui_login.status != 200 or 'Login successful' not in ui_login.content
+
+    - name: The session reaches the dashboard
+      ansible.builtin.uri:
+        url: "{{ base_url }}/dashboard/"
+        validate_certs: false
+        headers:
+          Cookie: "{{ ui_login.cookies_string | default(login.cookies_string, true) }}"
+        return_content: true
+      register: dashboard
+      failed_when: dashboard.status != 200 or 'logout' not in dashboard.content | lower
+
     - name: Read the phpIPAM settings
       ansible.mysql.mysql_query:
         <<: *db_login
