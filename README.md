@@ -13,7 +13,7 @@ Features:
 - Kea DHCP integration (see below): an API app for the Kea role's reservation sync, a shared Kea reservation database on the same MariaDB, and phpIPAM's built-in Kea DHCP page.
 - Scheduled jobs as sandboxed systemd timers (ping check, discovery, optional DNS resolve and offline cleanup), and a nightly database backup taken by a read-only account and optionally encrypted to a certificate.
 - SELinux labels and booleans, a fapolicyd trust file for the phpIPAM tree, and FIPS-friendly defaults.
-- Molecule tests with podman on EL8, EL9 and EL10.
+- Molecule tests on the Proxmox test lab's VMs (EL9 and EL10, SELinux enforcing, firewalld running).
 
 ## Requirements
 
@@ -255,26 +255,55 @@ Sessions are stored in the database (`phpipam_session_storage`), so nothing depe
 
 ## Testing
 
-Tests run locally with podman, not in CI. On the AlmaLinux 10 WSL environment:
+Tests run on the Proxmox test lab. `molecule test` converges two real KVM VMs cloned from the
+lab's fleet onto its isolated labnet network — EL9 and EL10 side by side, SELinux enforcing and
+firewalld running — then checks idempotence and verifies the deployment the way production
+would notice:
+
+- the login page, redirects and blocked paths;
+- static caching and HTTP/2;
+- both API apps and the settings;
+- the phpIPAM user's reduced rights;
+- the Kea config file and the certificate, with the Kea pieces enabled against a static Kea
+  configuration;
+- the logo link;
+- that a PHP file planted in an upload folder is neither trusted nor served;
+- the PHP settings;
+- ping inside the job sandbox;
+- an encrypted backup, owned by the backup user, that decrypts and restores.
+
+Tests run on the lab's molecule control machine: `molecule`, `molecule-proxmox` and the role's
+collections are preinstalled there, as are the pinned `jmaughmer.mariadb` and `jmaughmer.apache`
+role checkouts the dependency management needs; the driver's connection secrets and SSH key live
+only in the control machine's own config files. Nothing lab-specific is in this repo beyond the
+fleet template names and the default VMID band (9240–9241); hosts, tokens and subnets never
+leave the control machine. The Test Lab project's `molecule-labnet/` directory documents the lab
+itself. `LAB_TEMPLATE_EL9`/`LAB_TEMPLATE_EL10` pick each box's template (`template-alma8`,
+`template-alma9` or `template-alma10`):
 
 ```bash
-scripts/test.sh            # lint, default (EL9 + EL10) and el8
-scripts/test.sh lint
-scripts/test.sh default
-scripts/test.sh el8        # uses ansible-core 2.16
+molecule test                                   # EL9 + EL10
+LAB_TEMPLATE_EL9=template-alma8 molecule test   # exercise the EL8 interpreter path too
 ```
 
-The script creates its virtualenvs and fetches the dependent roles into `.cache/test`. The repository directory must be named `ansible-role-phpipam`. The scenarios install fapolicyd (stopped) to exercise the trust file, enable the Kea pieces with a static Kea configuration, and verify the following:
-- the login page, redirects and blocked paths
-- static caching and HTTP/2
-- both API apps and the settings
-- the phpIPAM user's reduced rights
-- the Kea config file and the certificate
-- the logo link
-- that a PHP file planted in an upload folder is neither trusted nor served
-- the PHP settings
-- ping inside the job sandbox
-- an encrypted backup, owned by the backup user, that decrypts and restores Rootless podman needs working systemd containers; if they fail under WSL, run the script with `sudo`.
+The VMIDs come from `LAB_VMID_0/1` and default to the pinned 9240–9241 band, so a plain
+`molecule test` means one lab run of this repo at a time. For several runs of this repo at once,
+use the lab's `mlab` wrapper, which claims a free VMID band (and an isolated ephemeral
+directory) per run:
+
+```bash
+/root/labnet/mlab test -s default               # parallel-safe run on the control machine
+```
+
+Lint with `yamllint .` and `ansible-lint` (configured by [`.yamllint`](.yamllint) and
+[`.ansible-lint`](.ansible-lint)). There is no CI; run the lint and Molecule from the control
+machine.
+
+Not covered by the scenario: the supplied-certificate paths with vaulted test keys, including
+the served-certificate and expected-failure checks (the removed `provided` scenarios); and the
+EL8-on-ansible-core-2.16 pin (the removed `el8` scenario; the EL8 guest itself is still one
+`LAB_TEMPLATE_EL9=template-alma8` away). FIPS mode and Red Hat Satellite repositories remain
+uncovered: they need hosts with FIPS enabled or a Satellite registration.
 
 ## Main variables
 
